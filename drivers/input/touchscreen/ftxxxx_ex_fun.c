@@ -1006,7 +1006,7 @@ static ssize_t switch_gesture_mode_store(struct device *dev, struct device_attri
 
 		for (tmp = 0; tmp < 7; tmp++) {
 			if (gesture_buf[tmp] == cmpchar) {
-				gesturetmp |= (1 << tmp);
+				gesturetmp |= (1 << (6 - tmp));
 			}
 		}
 
@@ -1070,10 +1070,30 @@ static ssize_t switch_gesture_mode_show(struct device *dev, struct device_attrib
 	tmp = (ftxxxx_ts->gesture_mode_type >> 6) & 1;
 
 	if (!tmp)
-		return sprintf(buf, "%x \n", tmp);
+		return sprintf(buf, "%x\n", tmp);
 	else
-		return sprintf(buf, "%x \n", ftxxxx_ts->gesture_mode_type);
+		return sprintf(buf, "%x\n", ftxxxx_ts->gesture_mode_type);
 
+}
+static ssize_t switch_keypad_mode_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+	int tmp = 0;
+	tmp = buf[0] - 48;
+
+	if (tmp == 0) {
+		focal_keypad_switch(0);
+		printk("[Focal][Touch] keypad_mode_disable ! \n");
+	} else if (tmp == 1) {
+		focal_keypad_switch(1);
+		printk("[Focal][Touch] keypad_mode_enable ! \n");
+	}
+
+	return count;
+}
+
+static ssize_t switch_keypad_mode_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", ftxxxx_ts->keypad_mode_enable);
 }
 static ssize_t irq_disable_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
@@ -3247,6 +3267,7 @@ static DEVICE_ATTR(cover_mode, Focal_RW_ATTR, switch_cover_mode_show, switch_cov
 static DEVICE_ATTR(dclick_mode, Focal_RW_ATTR, switch_dclick_mode_show, switch_dclick_mode_store);
 static DEVICE_ATTR(swipeup_mode, Focal_RW_ATTR, switch_swipeup_mode_show, switch_swipeup_mode_store);
 static DEVICE_ATTR(gesture_mode, Focal_RW_ATTR, switch_gesture_mode_show, switch_gesture_mode_store);
+static DEVICE_ATTR(keypad_mode, Focal_RW_ATTR, switch_keypad_mode_show, switch_keypad_mode_store);
 static DEVICE_ATTR(HW_ID, Focal_RW_ATTR, asus_get_hwid_show, NULL);
 static DEVICE_ATTR(IRQ_FORCE_DISABLE, Focal_RW_ATTR, irq_disable_show, irq_disable_store);
 static DEVICE_ATTR(IRQ_status, Focal_RW_ATTR, irq_status_show, NULL);
@@ -3293,6 +3314,7 @@ static struct attribute *ftxxxx_attributes[] = {
 	&dev_attr_glove_mode.attr,
 	&dev_attr_cover_mode.attr,
 	&dev_attr_gesture_mode.attr,
+	&dev_attr_keypad_mode.attr,
 	&dev_attr_HW_ID.attr,
 	&dev_attr_dclick_mode.attr,
 	&dev_attr_swipeup_mode.attr,

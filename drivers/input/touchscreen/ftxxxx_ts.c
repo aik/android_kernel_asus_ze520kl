@@ -71,19 +71,19 @@
 #ifdef FTS_GESTRUE
 /*zax 20140922*/
 #define KEY_GESTURE_U		KEY_POWER
-#define KEY_GESTURE_UP		KEY_UP
-#define KEY_GESTURE_DOWN		KEY_DOWN
-#define KEY_GESTURE_LEFT		KEY_LEFT
-#define KEY_GESTURE_RIGHT		KEY_RIGHT
-#define KEY_GESTURE_M		KEY_M
-#define KEY_GESTURE_L		KEY_L
+#define KEY_GESTURE_UP		257
+#define KEY_GESTURE_DOWN	258
+#define KEY_GESTURE_LEFT	259
+#define KEY_GESTURE_RIGHT	260
+#define KEY_GESTURE_M		261
+#define KEY_GESTURE_L		262
 /*asus use*/
-#define KEY_GESTURE_V		KEY_V
-#define KEY_GESTURE_Z		KEY_Z
-#define KEY_GESTURE_C		KEY_C
-#define KEY_GESTURE_E		KEY_E
-#define KEY_GESTURE_S		KEY_S
-#define KEY_GESTURE_W		KEY_W
+#define KEY_GESTURE_V		263
+#define KEY_GESTURE_Z		264
+#define KEY_GESTURE_C		265
+#define KEY_GESTURE_E		266
+#define KEY_GESTURE_S		267
+#define KEY_GESTURE_W		268
 /*asus use*/
 
 #define GESTURE_DOUBLECLICK	0x24
@@ -1334,6 +1334,41 @@ void focal_glove_switch(bool plugin)
 
 }
 
+void focal_keypad_switch(bool plugin)
+{
+
+	if (ftxxxx_ts == NULL) {
+		printk("[Focal][TOUCH_ERR] %s : ftxxxx_ts is null, skip \n", __func__);
+		return;
+	}
+
+	wake_lock(&ftxxxx_ts->wake_lock);
+
+	mutex_lock(&ftxxxx_ts->g_device_mutex);
+
+	if (focal_init_success == 1) {
+		if (plugin) {
+			set_bit(KEY_BACK, ftxxxx_ts->input_dev->keybit);
+			set_bit(KEY_HOME, ftxxxx_ts->input_dev->keybit);
+			set_bit(KEY_MENU, ftxxxx_ts->input_dev->keybit);
+
+			ftxxxx_ts->keypad_mode_enable = 1;
+		} else {
+			clear_bit(KEY_BACK, ftxxxx_ts->input_dev->keybit);
+			clear_bit(KEY_HOME, ftxxxx_ts->input_dev->keybit);
+			clear_bit(KEY_MENU, ftxxxx_ts->input_dev->keybit);
+
+			ftxxxx_ts->keypad_mode_enable = 0;
+		}
+	}
+
+	mutex_unlock(&ftxxxx_ts->g_device_mutex);
+
+	wake_unlock(&ftxxxx_ts->wake_lock);
+
+	return;
+}
+
 static void focal_reset_ic_work(struct work_struct *work)
 {
 
@@ -2164,6 +2199,7 @@ static int ftxxxx_ts_probe(struct i2c_client *client, const struct i2c_device_id
 	ftxxxx_ts->dclick_mode_eable = 0;
 	ftxxxx_ts->swipeup_mode_eable = 0;
 	ftxxxx_ts->gesture_mode_eable = 0;
+	ftxxxx_ts->keypad_mode_enable = true;
 	ftxxxx_ts->irq_wakeup_eable = 0;
 	ftxxxx_ts->gesture_mode_type = 0;
 	ftxxxx_ts->pdata = pdata;
