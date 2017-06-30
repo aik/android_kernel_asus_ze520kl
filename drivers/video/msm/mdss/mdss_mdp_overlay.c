@@ -69,6 +69,8 @@ static inline bool is_ov_right_blend(struct mdp_rect *left_blend,
 		(left_blend->h == right_blend->h));
 }
 
+int g_fps_customise_update = 0; //austin+++
+
 /**
  * __is_more_decimation_doable() -
  * @pipe: pointer to pipe data structure
@@ -1959,42 +1961,6 @@ set_roi:
 	mdss_mdp_set_roi(ctl, &l_roi, &r_roi);
 }
 
-static int __config_secure_display(struct mdss_overlay_private *mdp5_data)
-{
-	int panel_type = mdp5_data->ctl->panel_data->panel_info.type;
-	int sd_enable = -1; /* Since 0 is a valid state, initialize with -1 */
-	int ret = 0;
-
-	if (panel_type == MIPI_CMD_PANEL)
-		mdss_mdp_display_wait4pingpong(mdp5_data->ctl, true);
-
-	/*
-	 * Start secure display session if we are transitioning from non secure
-	 * to secure display.
-	 */
-	if (mdp5_data->sd_transition_state ==
-			SD_TRANSITION_NON_SECURE_TO_SECURE)
-		sd_enable = 1;
-
-	/*
-	 * For command mode panels, if we are trasitioning from secure to
-	 * non secure session, disable the secure display, as we've already
-	 * waited for the previous frame transfer.
-	 */
-	if ((panel_type == MIPI_CMD_PANEL) &&
-			(mdp5_data->sd_transition_state ==
-			 SD_TRANSITION_SECURE_TO_NON_SECURE))
-		sd_enable = 0;
-
-	if (sd_enable != -1) {
-		ret = mdss_mdp_secure_display_ctrl(mdp5_data->mdata, sd_enable);
-		if (!ret)
-			mdp5_data->sd_enabled = sd_enable;
-	}
-
-	return ret;
-}
-
 int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 				struct mdp_display_commit *data)
 {
@@ -2002,6 +1968,7 @@ int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 	struct mdss_mdp_pipe *pipe, *tmp;
 	struct mdss_mdp_ctl *ctl = mfd_to_ctl(mfd);
 	int ret = 0;
+	int sd_in_pipe = 0;
 	struct mdss_mdp_commit_cb commit_cb;
 
 	if (!ctl)
@@ -2034,6 +2001,30 @@ int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 	}
 	mutex_lock(&mdp5_data->list_lock);
 
+	/*
+	 * check if there is a secure display session
+	 */
+	list_for_each_entry(pipe, &mdp5_data->pipes_used, list) {
+		if (pipe->flags & MDP_SECURE_DISPLAY_OVERLAY_SESSION) {
+			sd_in_pipe = 1;
+			pr_debug("Secure pipe: %u : %08X\n",
+					pipe->num, pipe->flags);
+		}
+	}
+
+	/*
+	 * start secure display session if there is secure display session and
+	 * sd_enabled is not true.
+	 */
+	if (!mdp5_data->sd_enabled && sd_in_pipe) {
+		if (!mdss_get_sd_client_cnt())
+			ret = mdss_mdp_secure_display_ctrl(1);
+		if (!ret) {
+			mdp5_data->sd_enabled = 1;
+			mdss_update_sd_client(mdp5_data->mdata, true);
+		}
+	}
+
 	if (!ctl->shared_lock)
 		mdss_mdp_ctl_notify(ctl, MDP_NOTIFY_FRAME_BEGIN);
 
@@ -2045,14 +2036,6 @@ int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 
 	if (ctl->ops.wait_pingpong && mdp5_data->mdata->serialize_wait4pp)
 		mdss_mdp_display_wait4pingpong(ctl, true);
-
-	if (mdp5_data->sd_transition_state != SD_TRANSITION_NONE) {
-		ret = __config_secure_display(mdp5_data);
-		if (IS_ERR_VALUE(ret)) {
-			pr_err("Secure session config failed\n");
-			goto commit_fail;
-		}
-	}
 
 	/*
 	 * Setup pipe in solid fill before unstaging,
@@ -2130,14 +2113,17 @@ int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 
 	mutex_lock(&mdp5_data->ov_lock);
 	/*
-	 * If we are transitioning from secure to non-secure display,
-	 * disable the secure display.
+	 * If there is no secure display session and sd_enabled, disable the
+	 * secure display session
 	 */
-	if (mdp5_data->sd_enabled && (mdp5_data->sd_transition_state ==
-			SD_TRANSITION_SECURE_TO_NON_SECURE)) {
-		ret = mdss_mdp_secure_display_ctrl(mdp5_data->mdata, 0);
-		if (!ret)
+	if (mdp5_data->sd_enabled && !sd_in_pipe && !ret) {
+		/* disable the secure display on last client */
+		if (mdss_get_sd_client_cnt() == 1)
+			ret = mdss_mdp_secure_display_ctrl(0);
+		if (!ret) {
+			mdss_update_sd_client(mdp5_data->mdata, false);
 			mdp5_data->sd_enabled = 0;
+		}
 	}
 
 	mdss_fb_update_notify_update(mfd);
@@ -3043,6 +3029,11 @@ static ssize_t dynamic_fps_sysfs_wta_dfps(struct device *dev,
 		return count;
 	}
 
+	//fix DFPS austin+++
+	if (data.fps != pdata->panel_info.default_fps)
+		g_fps_customise_update = data.fps;
+	else 
+		g_fps_customise_update = pdata->panel_info.default_fps;
 	rc = mdss_mdp_dfps_update_params(mfd, pdata, &data);
 	if (rc) {
 		pr_err("failed to set dfps params\n");
@@ -3063,165 +3054,6 @@ static struct attribute *dynamic_fps_fs_attrs[] = {
 static struct attribute_group dynamic_fps_fs_attrs_group = {
 	.attrs = dynamic_fps_fs_attrs,
 };
-
-static ssize_t frame_counter_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
-{
-	struct fb_info *fbi = dev_get_drvdata(dev);
-	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)fbi->par;
-	struct mdss_mdp_ctl *ctl = mfd_to_ctl(mfd);
-	struct mdss_mdp_mixer *mixer;
-	u32 reg;
-
-	if (!ctl) {
-		pr_warn("there is no ctl attached to fb\n");
-		return -ENODEV;
-	}
-
-	mixer = mdss_mdp_mixer_get(ctl, MDSS_MDP_MIXER_MUX_LEFT);
-	if (!mixer) {
-		pr_warn("there is no mixer\n");
-		return -ENODEV;
-	}
-
-	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
-	reg = mdss_mdp_pingpong_read(mixer->pingpong_base,
-				MDSS_MDP_REG_PP_INT_COUNT_VAL) >> 16;
-	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);
-	return snprintf(buf, PAGE_SIZE, "%d\n", reg);
-}
-
-static DEVICE_ATTR(frame_counter, S_IRUSR | S_IRGRP, frame_counter_show, NULL);
-
-static int te_status = -1;
-static ssize_t te_enable_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
-{
-	struct fb_info *fbi = dev_get_drvdata(dev);
-	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)fbi->par;
-	struct mdss_mdp_ctl *ctl = mfd_to_ctl(mfd);
-	struct mdss_mdp_pp_tear_check *te;
-
-	if (!ctl || !ctl->panel_data) {
-		pr_warn("there is no ctl or panel_data\n");
-		return -ENODEV;
-	}
-
-	te = &ctl->panel_data->panel_info.te;
-	if (!te) {
-		pr_warn("there is no te information\n");
-		return -ENODEV;
-	}
-
-	if (te_status < 0)
-		te_status = te->tear_check_en;
-
-	return snprintf(buf, PAGE_SIZE, "%d\n", te_status);
-}
-
-static ssize_t te_enable_store(struct device *dev,
-			struct device_attribute *attr,
-			const char *buf, size_t count)
-{
-	struct fb_info *fbi = dev_get_drvdata(dev);
-	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)fbi->par;
-	struct mdss_mdp_ctl *ctl = mfd_to_ctl(mfd);
-	struct mdss_overlay_private *mdp5_data = mfd_to_mdp5_data(mfd);
-	struct mdss_mdp_mixer *mixer;
-	static int prev_height;
-
-	int enable;
-	int r = 0;
-	int i, mux;
-
-	if (!ctl || !mdp5_data) {
-		pr_warn("there is no ctl or mdp5_data attached to fb\n");
-		r = -ENODEV;
-		goto end;
-	}
-
-	if (mdss_fb_is_power_off(mfd)) {
-		pr_warn("panel is not powered\n");
-		r = -EPERM;
-		goto end;
-	}
-
-	r = kstrtoint(buf, 0, &enable);
-	if ((r) || ((enable != 0) && (enable != 1))) {
-		pr_err("invalid TE enable value = %d\n",
-			enable);
-		r = -EINVAL;
-		goto end;
-	}
-
-	mutex_lock(&mdp5_data->ov_lock);
-	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
-
-	if (te_status == enable) {
-		pr_info("te_status is not changed. Do nothing\n");
-		goto locked_end;
-	}
-
-	for (i = 0; i < 2; i++) {
-		if (i == 0)
-			mux = MDSS_MDP_MIXER_MUX_LEFT;
-		else if (i == 1)
-			mux = MDSS_MDP_MIXER_MUX_RIGHT;
-
-		mixer = mdss_mdp_mixer_get(ctl, mux);
-		if (!mixer) {
-			pr_warn("There is no mixer for mux = %d\n", i);
-			continue;
-		}
-
-		/* The TE max height in MDP is being set to a max value of
-		 * 0xFFF0. Since this is such a large number, when TE is
-		 * disabled from the panel, we'll start to get constant timeout
-		 * errors and get 1 FPS.  To prevent this from happening, set
-		 * the height to display height * 2.  This will just cause our
-		 * FPS to drop to 30 FPS, and prevent timeout errors. */
-		if (!enable) {
-			prev_height =
-				mdss_mdp_pingpong_read(mixer->pingpong_base,
-				MDSS_MDP_REG_PP_SYNC_CONFIG_HEIGHT) & 0xFFFF;
-			mdss_mdp_pingpong_write(mixer->pingpong_base,
-				MDSS_MDP_REG_PP_SYNC_CONFIG_HEIGHT,
-				mfd->fbi->var.yres * 2);
-		} else if (enable && prev_height) {
-			mdss_mdp_pingpong_write(mixer->pingpong_base,
-				MDSS_MDP_REG_PP_SYNC_CONFIG_HEIGHT,
-				prev_height);
-		}
-
-		r = mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_ENABLE_TE,
-					(void *) (long int) enable, false);
-		if (r) {
-			pr_err("Failed sending TE command, r=%d\n", r);
-			r = -EFAULT;
-			goto locked_end;
-		} else
-			te_status = enable;
-	}
-locked_end:
-	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);
-	mutex_unlock(&mdp5_data->ov_lock);
-
-end:
-	return r ? r : count;
-}
-
-static DEVICE_ATTR(te_enable, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP,
-					te_enable_show, te_enable_store);
-
-static struct attribute *factory_te_attrs[] = {
-	&dev_attr_frame_counter.attr,
-	&dev_attr_te_enable.attr,
-	NULL,
-};
-static struct attribute_group factory_te_attrs_group = {
-	.attrs = factory_te_attrs,
-};
-
 
 static ssize_t mdss_mdp_vsync_show_event(struct device *dev,
 		struct device_attribute *attr, char *buf)
@@ -5006,20 +4838,6 @@ static int mdss_mdp_overlay_ioctl_handler(struct msm_fb_data_type *mfd,
 		break;
 
 	default:
-		if (mfd->panel.type == MIPI_VIDEO_PANEL ||
-			mfd->panel.type == MIPI_CMD_PANEL) {
-			struct mdss_panel_data *pdata;
-			struct mdss_overlay_private *mdp5_data =
-				mfd_to_mdp5_data(mfd);
-
-			pdata = dev_get_platdata(&mfd->pdev->dev);
-			if (!pdata || !mdp5_data)
-				return -EFAULT;
-			mutex_lock(&mdp5_data->ov_lock);
-			ret = mdss_dsi_ioctl_handler(pdata, cmd, argp);
-			mutex_unlock(&mdp5_data->ov_lock);
-		}
-
 		break;
 	}
 
@@ -5220,8 +5038,7 @@ static int mdss_mdp_overlay_on(struct msm_fb_data_type *mfd)
 	TODO: In the long run, the overlay start and kickoff
 	should not be skipped, instead, the handoff can be done */
 	if (!mfd->panel_info->cont_splash_enabled &&
-		!mdata->handoff_pending &&
-		!mfd->panel_info->is_dba_panel) {
+		!mdata->handoff_pending) {
 		rc = mdss_mdp_overlay_start(mfd);
 		if (rc)
 			goto end;
@@ -5974,16 +5791,6 @@ int mdss_mdp_overlay_init(struct msm_fb_data_type *mfd)
 			goto init_fail;
 		}
 	}
-
-	if (mfd->panel_info->type == MIPI_CMD_PANEL) {
-		rc = sysfs_create_group(&dev->kobj,
-					&factory_te_attrs_group);
-		if (rc) {
-			pr_err("Error factory te sysfs creation ret=%d\n", rc);
-			goto init_fail;
-		}
-	}
-
 	mfd->mdp_sync_pt_data.async_wait_fences = true;
 
 	pm_runtime_set_suspended(&mfd->pdev->dev);

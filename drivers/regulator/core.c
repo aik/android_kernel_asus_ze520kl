@@ -112,11 +112,6 @@ static struct regulator *create_regulator(struct regulator_dev *rdev,
 					  struct device *dev,
 					  const char *supply_name);
 
-static struct regulator_dev *dev_to_rdev(struct device *dev)
-{
-	return container_of(dev, struct regulator_dev, dev);
-}
-
 static const char *rdev_get_name(struct regulator_dev *rdev)
 {
 	if (rdev->constraints && rdev->constraints->name)
@@ -4394,123 +4389,6 @@ unlock:
 }
 EXPORT_SYMBOL_GPL(regulator_suspend_finish);
 
-/* Add for vreg debug */
-#define VREG_NUM_MAX 100
-
-int vreg_dump_info(char *buf)
-{
-	char *p = buf;
-	struct regulator_dev *rdev;
-	unsigned on, mv;
-	int id;
-
-	mutex_lock(&regulator_list_mutex);
-
-	id = 0;
-	list_for_each_entry(rdev, &regulator_list, list) {
-		const struct regulator_ops *ops = rdev->desc->ops;
-
-		p += snprintf(p, PAGE_SIZE, "[%2d]%10s: ",
-			id++, rdev->desc->name);
-
-		on = mv = 0;
-		mutex_lock(&rdev->mutex);
-
-		if (ops->is_enabled)
-			on = ops->is_enabled(rdev);
-		if (ops->get_voltage)
-			mv = ops->get_voltage(rdev) / 1000;
-
-		mutex_unlock(&rdev->mutex);
-
-		p += snprintf(p, PAGE_SIZE, "%s ", on ? "on " : "off");
-		p += snprintf(p, PAGE_SIZE, "%4d mv ", mv);
-		p += snprintf(p, PAGE_SIZE, "\n");
-	}
-
-	mutex_unlock(&regulator_list_mutex);
-
-	return p - buf;
-}
-
-
-/* save vreg config before sleep */
-static unsigned before_sleep_fetched;
-static unsigned before_sleep_configs[VREG_NUM_MAX];
-void vreg_before_sleep_save_configs(void)
-{
-	struct regulator_dev *rdev;
-	unsigned on, mv;
-	int id;
-
-	/* only save vreg configs when it has been fetched */
-	if (!before_sleep_fetched)
-		return;
-
-	pr_debug("%s(), before_sleep_fetched=%d\n",
-		__func__, before_sleep_fetched);
-	before_sleep_fetched = false;
-
-	mutex_lock(&regulator_list_mutex);
-
-	id = 0;
-	list_for_each_entry(rdev, &regulator_list, list) {
-		const struct regulator_ops *ops = rdev->desc->ops;
-
-		on = mv = 0;
-		mutex_lock(&rdev->mutex);
-
-		if (ops->is_enabled)
-			on = ops->is_enabled(rdev);
-		if (ops->get_voltage)
-			mv = ops->get_voltage(rdev) / 1000;
-
-		mutex_unlock(&rdev->mutex);
-
-		before_sleep_configs[id] = mv | (on << 31);
-		if (++id >= VREG_NUM_MAX)
-			break;
-	}
-
-	mutex_unlock(&regulator_list_mutex);
-}
-
-int vreg_before_sleep_dump_info(char *buf)
-{
-	char *p = buf;
-
-	p += snprintf(p, PAGE_SIZE, "vreg_before_sleep:\n");
-	if (!before_sleep_fetched) {
-		struct regulator_dev *rdev;
-		unsigned on, mv;
-		int id;
-
-		before_sleep_fetched = true;
-
-		mutex_lock(&regulator_list_mutex);
-
-		id = 0;
-		list_for_each_entry(rdev, &regulator_list, list) {
-			p += snprintf(p, PAGE_SIZE, "[%2d]%10s: ",
-				id, rdev->desc->name);
-
-			mv = before_sleep_configs[id];
-			on = (mv & 0x80000000) >> 31;
-			mv &= ~0x80000000;
-
-			p += snprintf(p, PAGE_SIZE, "%s ", on ? "on " : "off");
-			p += snprintf(p, PAGE_SIZE, "%4d mv ", mv);
-			p += snprintf(p, PAGE_SIZE, "\n");
-
-			if (++id >= VREG_NUM_MAX)
-				break;
-		}
-
-		mutex_unlock(&regulator_list_mutex);
-	}
-	return p - buf;
-}
-
 /**
  * regulator_has_full_constraints - the system has fully specified constraints
  *
@@ -4647,57 +4525,13 @@ static int __init regulator_init(void)
 /* init early to allow our consumers to complete system booting */
 core_initcall(regulator_init);
 
-static int __init regulator_late_cleanup(struct device *dev, void *data)
-{
-	struct regulator_dev *rdev = dev_to_rdev(dev);
-	const struct regulator_ops *ops = rdev->desc->ops;
-	struct regulation_constraints *c = rdev->constraints;
-	int enabled, ret;
-
-	if (c && c->always_on)
-		return 0;
-
-	if (c && !(c->valid_ops_mask & REGULATOR_CHANGE_STATUS))
-		return 0;
-
-	mutex_lock(&rdev->mutex);
-
-	if (rdev->use_count)
-		goto unlock;
-
-	/* If we can't read the status assume it's on. */
-	if (ops->is_enabled)
-		enabled = ops->is_enabled(rdev);
-	else
-		enabled = 1;
-
-	if (!enabled)
-		goto unlock;
-
-	if (have_full_constraints()) {
-		/* We log since this may kill the system if it goes
-		 * wrong. */
-		rdev_info(rdev, "disabling\n");
-		ret = _regulator_do_disable(rdev);
-		if (ret != 0)
-			rdev_err(rdev, "couldn't disable: %d\n", ret);
-	} else {
-		/* The intention is that in future we will
-		 * assume that full constraints are provided
-		 * so warn even if we aren't going to do
-		 * anything here.
-		 */
-		rdev_warn(rdev, "incomplete constraints, leaving on\n");
-	}
-
-unlock:
-	mutex_unlock(&rdev->mutex);
-
-	return 0;
-}
-
 static int __init regulator_init_complete(void)
 {
+	struct regulator_dev *rdev;
+	const struct regulator_ops *ops;
+	struct regulation_constraints *c;
+	int enabled, ret;
+
 	/*
 	 * Since DT doesn't provide an idiomatic mechanism for
 	 * enabling full constraints and since it's much more natural
@@ -4707,13 +4541,58 @@ static int __init regulator_init_complete(void)
 	if (of_have_populated_dt())
 		has_full_constraints = true;
 
+	mutex_lock(&regulator_list_mutex);
+
 	/* If we have a full configuration then disable any regulators
 	 * we have permission to change the status for and which are
 	 * not in use or always_on.  This is effectively the default
 	 * for DT and ACPI as they have full constraints.
 	 */
-	class_for_each_device(&regulator_class, NULL, NULL,
-			      regulator_late_cleanup);
+	list_for_each_entry(rdev, &regulator_list, list) {
+		ops = rdev->desc->ops;
+		c = rdev->constraints;
+
+		if (c && c->always_on)
+			continue;
+
+		if (c && !(c->valid_ops_mask & REGULATOR_CHANGE_STATUS))
+			continue;
+
+		mutex_lock(&rdev->mutex);
+
+		if (rdev->use_count)
+			goto unlock;
+
+		/* If we can't read the status assume it's on. */
+		if (ops->is_enabled)
+			enabled = ops->is_enabled(rdev);
+		else
+			enabled = 1;
+
+		if (!enabled)
+			goto unlock;
+
+		if (have_full_constraints()) {
+			/* We log since this may kill the system if it
+			 * goes wrong. */
+			rdev_info(rdev, "disabling\n");
+			ret = _regulator_do_disable(rdev);
+			if (ret != 0)
+				rdev_err(rdev, "couldn't disable: %d\n", ret);
+		} else {
+			/* The intention is that in future we will
+			 * assume that full constraints are provided
+			 * so warn even if we aren't going to do
+			 * anything here.
+			 */
+			rdev_warn(rdev, "incomplete constraints, leaving on\n");
+		}
+
+unlock:
+		mutex_unlock(&rdev->mutex);
+	}
+
+	mutex_unlock(&regulator_list_mutex);
 
 	return 0;
 }

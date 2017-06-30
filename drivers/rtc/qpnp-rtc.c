@@ -17,7 +17,6 @@
 #include <linux/slab.h>
 #include <linux/idr.h>
 #include <linux/of_device.h>
-#include <linux/qpnp/power-on.h>
 #include <linux/spmi.h>
 #include <linux/spinlock.h>
 #include <linux/spmi.h>
@@ -52,6 +51,11 @@ bool poweron_alarm;
 module_param(poweron_alarm, bool, 0644);
 MODULE_PARM_DESC(poweron_alarm, "Enable/Disable power-on alarm");
 EXPORT_SYMBOL(poweron_alarm);
+//[+++]Add the control feature for S-Current measurement
+bool rtc_wake_control;
+module_param(rtc_wake_control, bool, 0644);
+MODULE_PARM_DESC(rtc_wake_control, "Enable/Disable rtc-alrm wakeup");
+//[---]Add the control feature for S-Current measurement
 
 /* rtc driver internal structure */
 struct qpnp_rtc {
@@ -339,8 +343,8 @@ qpnp_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alarm)
 
 	rtc_dd->alarm_ctrl_reg1 = ctrl_reg;
 
-	dev_dbg(dev, "Alarm Set Enabled: %d for h:r:s=%d:%d:%d, d/m/y=%d/%d/%d\n",
-			alarm->enabled, alarm->time.tm_hour, alarm->time.tm_min,
+	dev_dbg(dev, "Alarm Set for h:r:s=%d:%d:%d, d/m/y=%d/%d/%d\n",
+			alarm->time.tm_hour, alarm->time.tm_min,
 			alarm->time.tm_sec, alarm->time.tm_mday,
 			alarm->time.tm_mon, alarm->time.tm_year);
 rtc_rw_fail:
@@ -599,8 +603,6 @@ static int qpnp_rtc_probe(struct spmi_device *spmi)
 
 	/* Init power_on_alarm after adding rtc device */
 	power_on_alarm_init();
-	qpnp_pon_store_shipmode_info(RESET_SHIPMODE_INFO_SHPMOD_REASON |
-				     RESET_SHIPMODE_INFO_ARMED_REASON, 0);
 
 	/* Request the alarm IRQ */
 	rc = request_any_context_irq(rtc_dd->rtc_alarm_irq,
@@ -638,12 +640,6 @@ static int qpnp_rtc_remove(struct spmi_device *spmi)
 	return 0;
 }
 
-static inline int qpnp_rtc_is_rtc_alarm_enabled(struct qpnp_rtc *rtc_dd)
-{
-	return (rtc_dd->alarm_ctrl_reg1 & BIT_RTC_ALARM_ENABLE) ? 1 : 0;
-}
-
-#define SHIPMODE_DELAY_SECS 2592000
 static void qpnp_rtc_shutdown(struct spmi_device *spmi)
 {
 	u8 value[4] = {0};
@@ -652,10 +648,6 @@ static void qpnp_rtc_shutdown(struct spmi_device *spmi)
 	unsigned long irq_flags;
 	struct qpnp_rtc *rtc_dd;
 	bool rtc_alarm_powerup;
-
-	unsigned long secs_rtc;
-	struct rtc_time rtc_tm;
-	struct rtc_wkalrm shipmode_alarm;
 
 	if (!spmi) {
 		pr_err("qpnp-rtc: spmi device not found\n");
@@ -691,29 +683,29 @@ static void qpnp_rtc_shutdown(struct spmi_device *spmi)
 fail_alarm_disable:
 		spin_unlock_irqrestore(&rtc_dd->alarm_ctrl_lock, irq_flags);
 	}
-
-	if ((power_on_alarm_empty() != 1) ||
-		qpnp_rtc_is_rtc_alarm_enabled(rtc_dd)) {
-		dev_warn(&spmi->dev, "Queue not empty unable to setup Shipmode\n");
-		return;
-	}
-
-	rc = qpnp_rtc_read_time(&spmi->dev, &rtc_tm);
-	if (rc) {
-		dev_err(&spmi->dev, "Unable to read RTC time for Shipmode\n");
-		return;
-	}
-
-	rtc_tm_to_time(&rtc_tm, &secs_rtc);
-	dev_warn(&spmi->dev, "Shipmode current time %ld secs\n", secs_rtc);
-	secs_rtc += SHIPMODE_DELAY_SECS;
-	shipmode_alarm.enabled = 1;
-	rtc_time_to_tm(secs_rtc, &shipmode_alarm.time);
-	dev_warn(&spmi->dev, "Setup Shipmode trigger %ld secs\n", secs_rtc);
-	qpnp_pon_store_shipmode_info(RESET_SHIPMODE_INFO_SHPMOD_REASON,
-				     RESET_SHIPMODE_INFO_SHPMOD_REASON);
-	qpnp_rtc_set_alarm(&spmi->dev, &shipmode_alarm);
 }
+
+//[+++]Add the function to enable/disable qpnp_rtc wakeup ability
+static int qpnp_rtc_suspend(struct spmi_device *spmi, pm_message_t pmesg)
+{
+	struct qpnp_rtc *rtc_dd = dev_get_drvdata(&spmi->dev);
+	if (!rtc_wake_control)
+		return 0;
+	pr_err("disable qpnp_rtc wakeup source\n");
+	disable_irq_wake(rtc_dd->rtc_alarm_irq);
+	return 0;
+}
+
+static int qpnp_rtc_resume(struct spmi_device *spmi)
+{
+	struct qpnp_rtc *rtc_dd = dev_get_drvdata(&spmi->dev);
+	if (!rtc_wake_control)
+		return 0;
+	pr_err("enable qpnp_rtc wakeup source\n");
+	enable_irq_wake(rtc_dd->rtc_alarm_irq);
+	return 0;
+}
+//[---]Add the function to enable/disable qpnp_rtc wakeup ability
 
 static struct of_device_id spmi_match_table[] = {
 	{
@@ -726,6 +718,8 @@ static struct spmi_driver qpnp_rtc_driver = {
 	.probe          = qpnp_rtc_probe,
 	.remove         = qpnp_rtc_remove,
 	.shutdown       = qpnp_rtc_shutdown,
+	.suspend 	= qpnp_rtc_suspend,
+	.resume		= qpnp_rtc_resume,
 	.driver = {
 		.name   = "qcom,qpnp-rtc",
 		.owner  = THIS_MODULE,

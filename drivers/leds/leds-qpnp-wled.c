@@ -44,13 +44,14 @@
 #define QPNP_WLED_SOFTSTART_RAMP_DLY(b) (b + 0x53)
 #define QPNP_WLED_VLOOP_COMP_RES_REG(b)	(b + 0x55)
 #define QPNP_WLED_VLOOP_COMP_GM_REG(b)	(b + 0x56)
-#define QPNP_WLED_PSM_EN_REG(b)		(b + 0x5A)
 #define QPNP_WLED_PSM_CTRL_REG(b)	(b + 0x5B)
 #define QPNP_WLED_SC_PRO_REG(b)		(b + 0x5E)
 #define QPNP_WLED_CTRL_SPARE_REG(b)	(b + 0xDF)
 #define QPNP_WLED_TEST1_REG(b)		(b + 0xE2)
 #define QPNP_WLED_TEST4_REG(b)		(b + 0xE5)
 #define QPNP_WLED_REF_7P7_TRIM_REG(b)	(b + 0xF2)
+/*ASUS_BSP+++*/
+#define QPNP_WLED_SWITCH_SLEW_RATE(b)	(b + 0x54)
 
 #define QPNP_WLED_7P7_TRIM_MASK		0xF
 #define QPNP_WLED_EN_MASK		0x7F
@@ -73,8 +74,6 @@
 #define QPNP_WLED_LOOP_EA_GM_DFLT_AMOLED		0x03
 #define QPNP_WLED_LOOP_EA_GM_MIN			0x0
 #define QPNP_WLED_LOOP_EA_GM_MAX			0xF
-#define QPNP_WLED_PSM_ENABLE				0x80
-#define QPNP_WLED_PSM_DISABLE				0x00
 #define QPNP_WLED_VREF_PSM_MASK				0xF8
 #define QPNP_WLED_VREF_PSM_STEP_MV			50
 #define QPNP_WLED_VREF_PSM_MIN_MV			400
@@ -287,7 +286,6 @@ static int qpnp_wled_avdd_trim_adjustments[NUM_SUPPORTED_AVDD_VOLTAGES] = {
  *  @ ibb_bias_active - activate display bias
  *  @ lab_fast_precharge - fast/slow precharge
  *  @ en_ext_pfet_sc_pro - enable sc protection on external pfet
- *  @ en_amoled_psm - Enable Pulse skipping mode in AMOLED mode
  */
 struct qpnp_wled {
 	struct led_classdev	cdev;
@@ -325,7 +323,6 @@ struct qpnp_wled {
 	bool disp_type_amoled;
 	bool en_ext_pfet_sc_pro;
 	bool prev_state;
-	bool en_amoled_psm;
 };
 
 /* helper to read a pmic register */
@@ -902,14 +899,6 @@ static int qpnp_wled_set_disp(struct qpnp_wled *wled, u16 base_addr)
 		if (rc)
 			return rc;
 
-		/* PSM EN register for AMOLED */
-		if (wled->en_amoled_psm)
-			reg = QPNP_WLED_PSM_ENABLE;
-		else
-			reg = QPNP_WLED_PSM_DISABLE;
-		rc = qpnp_wled_write_reg(wled, &reg,
-					QPNP_WLED_PSM_EN_REG(wled->ctrl_base));
-
 		/* Configure the VLOOP COMP RES register for AMOLED */
 		if (wled->loop_comp_res_kohm < QPNP_WLED_LOOP_COMP_RES_MIN_KOHM)
 			wled->loop_comp_res_kohm =
@@ -1193,6 +1182,12 @@ static int qpnp_wled_config(struct qpnp_wled *wled)
 			return rc;
 	}
 
+	if (g_ASUS_hwID >= ZE520KL_EVB && g_ASUS_hwID < ZE552KL_UNKNOWN) {
+		reg = 0x01;
+		rc = qpnp_wled_write_reg(wled, &reg,
+			QPNP_WLED_SWITCH_SLEW_RATE(wled->ctrl_base));
+	}
+
 	/* Configure the MODULATION register */
 	if (wled->mod_freq_khz <= QPNP_WLED_MOD_FREQ_1200_KHZ) {
 		wled->mod_freq_khz = QPNP_WLED_MOD_FREQ_1200_KHZ;
@@ -1466,6 +1461,7 @@ static int qpnp_wled_parse_dt(struct qpnp_wled *wled)
 	u32 temp_val;
 	int rc, i;
 	u8 *strings;
+	char temp_prop[30];
 
 	wled->cdev.name = "wled";
 	rc = of_property_read_string(spmi->dev.of_node,
@@ -1530,9 +1526,6 @@ static int qpnp_wled_parse_dt(struct qpnp_wled *wled)
 			wled->avdd_target_voltage_mv =
 				QPNP_WLED_AVDD_DEFAULT_VOLTAGE_MV;
 		}
-
-		wled->en_amoled_psm = of_property_read_bool(spmi->dev.of_node,
-				"qcom,enable-amoled-pulse-skipping");
 	}
 
 	wled->sc_deb_cycles = QPNP_WLED_SC_DEB_CYCLES_DFLT;
@@ -1670,6 +1663,12 @@ static int qpnp_wled_parse_dt(struct qpnp_wled *wled)
 		dev_err(&spmi->dev, "Unable to read full scale current\n");
 		return rc;
 	}
+
+	sprintf(temp_prop, "qcom,fs-curr-ua-%d", g_asus_lcdID);
+	rc = of_property_read_u32(spmi->dev.of_node,
+			temp_prop, &temp_val);
+	if (!rc)
+		wled->fs_curr_ua = temp_val;
 
 	wled->cons_sync_write_delay_us = 0;
 	rc = of_property_read_u32(spmi->dev.of_node,

@@ -70,9 +70,10 @@
 #define MSMFB_LPM_ENABLE	_IOWR(MSMFB_IOCTL_MAGIC, 170, unsigned int)
 #define MSMFB_MDP_PP_GET_FEATURE_VERSION _IOWR(MSMFB_IOCTL_MAGIC, 171, \
 					      struct mdp_pp_feature_version)
-#define MSMFB_SET_PERSISTENCE_MODE	_IOWR(MSMFB_IOCTL_MAGIC, 172, unsigned int)
-#define MSMFB_REG_READ   _IOWR(MSMFB_IOCTL_MAGIC, 64, struct msmfb_reg_access)
-#define MSMFB_REG_WRITE  _IOW(MSMFB_IOCTL_MAGIC, 65, struct msmfb_reg_access)
+
+// ASUS BSP Display +++
+#define MSMFB_CABC_CTRL _IOW(MSMFB_IOCTL_MAGIC, 171, unsigned int)
+// ASUS BSP Display ---
 
 #define FB_TYPE_3D_PANEL 0x10101010
 #define MDP_IMGTYPE2_START 0x10000
@@ -117,6 +118,15 @@
 #define MDSS_MDP_HW_REV_116	MDSS_MDP_REV(1, 16, 0) /* msm8953 */
 #define MDSS_MDP_HW_REV_300	MDSS_MDP_REV(3, 0, 0)  /* msmcobalt */
 #define MDSS_MDP_HW_REV_301	MDSS_MDP_REV(3, 0, 1)  /* msmcobalt v1.0 */
+
+//ASUS BSP Display, cabc mode +++
+enum {
+	OFF_MODE = 0x0,
+	UI_MODE,
+	Still_MODE,
+	Moving_MODE,
+};
+//ASUS BSP Display, cabc mode ---
 
 enum {
 	NOTIFY_UPDATE_INIT,
@@ -1352,13 +1362,6 @@ struct msmfb_mixer_info_req {
 	int mixer_num;
 	int cnt;
 	struct mdp_mixer_info info[MAX_PIPE_PER_MIXER];
-};
-
-struct msmfb_reg_access {
-	uint8_t address;
-	uint8_t use_hs_mode;
-	uint32_t buffer_size;
-	uint8_t *buffer;
 };
 
 enum {

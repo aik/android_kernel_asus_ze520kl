@@ -16,8 +16,8 @@
  *
  */
 
-#include <linux/atomic.h>
 #include <linux/err.h>
+#include <linux/atomic.h>
 #include <linux/file.h>
 #include <linux/freezer.h>
 #include <linux/fs.h>
@@ -41,7 +41,7 @@
 #include <linux/msm_ion.h>
 #include <linux/msm_dma_iommu_mapping.h>
 #include <trace/events/kmem.h>
-
+#include <linux/proc_fs.h>
 
 #include "ion.h"
 #include "ion_priv.h"
@@ -114,7 +114,6 @@ struct ion_client {
  */
 struct ion_handle {
 	struct kref ref;
-	unsigned int user_ref_count;
 	struct ion_client *client;
 	struct ion_buffer *buffer;
 	struct rb_node node;
@@ -184,7 +183,6 @@ static void ion_buffer_add(struct ion_device *dev,
 /* this function should only be called while dev->lock is held */
 static struct ion_buffer *ion_buffer_create(struct ion_heap *heap,
 				     struct ion_device *dev,
-				     const char *alloc_client_name,
 				     unsigned long len,
 				     unsigned long align,
 				     unsigned long flags)
@@ -220,18 +218,15 @@ static struct ion_buffer *ion_buffer_create(struct ion_heap *heap,
 	buffer->flags = flags;
 	INIT_LIST_HEAD(&buffer->vmas);
 
-	snprintf(buffer->alloc_client_name, ION_ALLOC_CLIENT_NAME_SIZE,
-		"%s", alloc_client_name);
-
 	table = heap->ops->map_dma(heap, buffer);
 	if (WARN_ONCE(table == NULL,
 			"heap->ops->map_dma should return ERR_PTR on error"))
 		table = ERR_PTR(-EINVAL);
 	if (IS_ERR(table)) {
-		ret = -EINVAL;
-		goto err1;
+		heap->ops->free(buffer);
+		kfree(buffer);
+		return ERR_CAST(table);
 	}
-
 	buffer->sg_table = table;
 	if (ion_buffer_fault_user_mappings(buffer)) {
 		int num_pages = PAGE_ALIGN(buffer->size) / PAGE_SIZE;
@@ -241,7 +236,7 @@ static struct ion_buffer *ion_buffer_create(struct ion_heap *heap,
 		buffer->pages = vmalloc(sizeof(struct page *) * num_pages);
 		if (!buffer->pages) {
 			ret = -ENOMEM;
-			goto err;
+			goto err1;
 		}
 
 		for_each_sg(table->sgl, sg, table->nents, i) {
@@ -250,6 +245,9 @@ static struct ion_buffer *ion_buffer_create(struct ion_heap *heap,
 			for (j = 0; j < sg->length / PAGE_SIZE; j++)
 				buffer->pages[k++] = page++;
 		}
+
+		if (ret)
+			goto err;
 	}
 
 	mutex_init(&buffer->lock);
@@ -273,8 +271,10 @@ static struct ion_buffer *ion_buffer_create(struct ion_heap *heap,
 
 err:
 	heap->ops->unmap_dma(heap, buffer);
-err1:
 	heap->ops->free(buffer);
+err1:
+	if (buffer->pages)
+		vfree(buffer->pages);
 err2:
 	kfree(buffer);
 	return ERR_PTR(ret);
@@ -437,48 +437,6 @@ int ion_handle_put(struct ion_handle *handle)
 	return ret;
 }
 
-/* Must hold the client lock */
-static void user_ion_handle_get(struct ion_handle *handle)
-{
-	if (handle->user_ref_count++ == 0)
-		kref_get(&handle->ref);
-}
-
-/* Must hold the client lock */
-static struct ion_handle *user_ion_handle_get_check_overflow(struct ion_handle *handle)
-{
-	if (handle->user_ref_count + 1 == 0)
-		return ERR_PTR(-EOVERFLOW);
-	user_ion_handle_get(handle);
-	return handle;
-}
-
-/* passes a kref to the user ref count.
- * We know we're holding a kref to the object before and
- * after this call, so no need to reverify handle. */
-static struct ion_handle *pass_to_user(struct ion_handle *handle)
-{
-	struct ion_client *client = handle->client;
-	struct ion_handle *ret;
-
-	mutex_lock(&client->lock);
-	ret = user_ion_handle_get_check_overflow(handle);
-	ion_handle_put_nolock(handle);
-	mutex_unlock(&client->lock);
-	return ret;
-}
-
-/* Must hold the client lock */
-static int user_ion_handle_put_nolock(struct ion_handle *handle)
-{
-	int ret;
-
-	if (--handle->user_ref_count == 0)
-		ret = ion_handle_put_nolock(handle);
-
-	return ret;
-}
-
 static struct ion_handle *ion_handle_lookup(struct ion_client *client,
 					    struct ion_buffer *buffer)
 {
@@ -602,8 +560,7 @@ static struct ion_handle *__ion_alloc(struct ion_client *client, size_t len,
 			continue;
 		trace_ion_alloc_buffer_start(client->name, heap->name, len,
 					     heap_id_mask, flags);
-		buffer = ion_buffer_create(heap, dev,
-					   client->name, len, align, flags);
+		buffer = ion_buffer_create(heap, dev, len, align, flags);
 		trace_ion_alloc_buffer_end(client->name, heap->name, len,
 					   heap_id_mask, flags);
 		if (!IS_ERR(buffer))
@@ -689,25 +646,6 @@ static void ion_free_nolock(struct ion_client *client, struct ion_handle *handle
 		return;
 	}
 	ion_handle_put_nolock(handle);
-}
-
-/* Must hold the client lock */
-static void user_ion_free_nolock(struct ion_client *client, struct ion_handle *handle)
-{
-	bool valid_handle;
-
-	BUG_ON(client != handle->client);
-
-	valid_handle = ion_handle_validate(client, handle);
-	if (!valid_handle) {
-		WARN(1, "%s: invalid handle passed to free.\n", __func__);
-		return;
-	}
-	if (handle->user_ref_count == 0) {
-		WARN(1, "%s: User does not have access!\n", __func__);
-		return;
-	}
-	user_ion_handle_put_nolock(handle);
 }
 
 void ion_free(struct ion_client *client, struct ion_handle *handle)
@@ -883,7 +821,7 @@ static int ion_debug_client_show(struct seq_file *s, void *unused)
 		struct ion_handle *handle = rb_entry(n, struct ion_handle,
 						     node);
 
-		seq_printf(s, "%16.16s: %16zx : %16d : %12pK",
+		seq_printf(s, "%16.16s: %16zx : %16d : %12p",
 				handle->buffer->heap->name,
 				handle->buffer->size,
 				atomic_read(&handle->ref.refcount),
@@ -1575,7 +1513,7 @@ static long ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 						data.allocation.flags, true);
 		if (IS_ERR(handle))
 			return PTR_ERR(handle);
-		pass_to_user(handle);
+
 		data.allocation.handle = handle->id;
 
 		cleanup_handle = handle;
@@ -1591,7 +1529,7 @@ static long ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			mutex_unlock(&client->lock);
 			return PTR_ERR(handle);
 		}
-		user_ion_free_nolock(client, handle);
+		ion_free_nolock(client, handle);
 		ion_handle_put_nolock(handle);
 		mutex_unlock(&client->lock);
 		break;
@@ -1615,15 +1553,10 @@ static long ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		struct ion_handle *handle;
 
 		handle = ion_import_dma_buf(client, data.fd.fd);
-		if (IS_ERR(handle)) {
+		if (IS_ERR(handle))
 			ret = PTR_ERR(handle);
-		} else {
-			handle = pass_to_user(handle);
-			if (IS_ERR(handle))
-				ret = PTR_ERR(handle);
-			else
-				data.handle.handle = handle->id;
-		}
+		else
+			data.handle.handle = handle->id;
 		break;
 	}
 	case ION_IOC_SYNC:
@@ -1655,10 +1588,8 @@ static long ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	if (dir & _IOC_READ) {
 		if (copy_to_user((void __user *)arg, &data, _IOC_SIZE(cmd))) {
 			if (cleanup_handle) {
-				mutex_lock(&client->lock);
-				user_ion_free_nolock(client, cleanup_handle);
-				ion_handle_put_nolock(cleanup_handle);
-				mutex_unlock(&client->lock);
+				ion_free(client, cleanup_handle);
+				ion_handle_put(cleanup_handle);
 			}
 			return -EFAULT;
 		}
@@ -2038,70 +1969,74 @@ int ion_walk_heaps(struct ion_client *client, int heap_id,
 }
 EXPORT_SYMBOL(ion_walk_heaps);
 
-static int ion_debug_allbufs_show(struct seq_file *s, void *unused)
-{
-	struct ion_device *dev = s->private;
-	struct rb_node *n;
+extern struct ion_heap *heap_internal;
 
-	seq_printf(s, "%16.s %16.s %12.s %12.s %20.s    %s\n", "heap",
-		"buffer", "size", "ref cnt", "allocator", "references");
+static int ion_used_proc_read(struct seq_file *s, void *v)
+{
+	struct ion_heap *heap = heap_internal;
+	struct ion_device *dev = heap_internal->dev;
+	struct rb_node *n;
+	size_t total_size = 0;
+	size_t total_orphaned_size = 0;
+
+	/*
+	pr_info("%16.s %16.s %16.s\n", "client", "pid", "size");
+	pr_info("----------------------------------------------------\n");
 
 	down_read(&dev->lock);
+	for (n = rb_first(&dev->clients); n; n = rb_next(n)) {
+		struct ion_client *client = rb_entry(n, struct ion_client,
+						     node);
+		size_t size = ion_debug_heap_total(client, heap->id);
+
+		if (!size)
+			continue;
+		if (client->task) {
+			char task_comm[TASK_COMM_LEN];
+
+			get_task_comm(task_comm, client->task);
+			pr_info("%16.s %16u %16zu\n", task_comm, client->pid, size);
+		} else {
+			pr_info("%16.s %16u %16zu\n", client->name, client->pid, size);
+		}
+	}
+	up_read(&dev->lock);
+	pr_info("----------------------------------------------------\n");
+	pr_info("orphaned allocations (info is from last known client):\n");
+	*/
+
 	mutex_lock(&dev->buffer_lock);
 	for (n = rb_first(&dev->buffers); n; n = rb_next(n)) {
-		struct rb_node *j;
-		struct ion_buffer *buf = rb_entry(n, struct ion_buffer, node);
-		int buf_refcount = atomic_read(&buf->ref.refcount);
-		int refs_found = 0;
-		int clients_busy = 0;
+		struct ion_buffer *buffer = rb_entry(n, struct ion_buffer, node);
+		if (buffer->heap->id != heap->id)
+			continue;
+		total_size += buffer->size;
 
-		seq_printf(s, "%16.s %16pK %12.x %12.d %20.s    %s",
-			buf->heap->name, buf, (int)buf->size,
-			buf_refcount, buf->alloc_client_name, "");
-
-		for (j = rb_first(&dev->clients); j; j = rb_next(j)) {
-			struct ion_client *entry = rb_entry(j,
-							    struct ion_client,
-							    node);
-			struct ion_handle *handle;
-
-			if (!mutex_trylock(&entry->lock)) {
-				clients_busy++;
-				continue;
-			}
-			handle = ion_handle_lookup(entry, buf);
-			if (!IS_ERR(handle)) {
-				seq_printf(s, "%s, ", entry->name);
-				refs_found++;
-			}
-			mutex_unlock(&entry->lock);
+		if (!buffer->handle_count) {
+			/*
+			pr_info("%16.s %16u %16zu %d %d\n",
+				buffer->task_comm, buffer->pid,
+				buffer->size, buffer->kmap_cnt,
+				atomic_read(&buffer->ref.refcount));
+			*/
+			total_orphaned_size += buffer->size;
 		}
-		if (refs_found != buf_refcount) {
-			if ((buf_refcount == 1) && (!clients_busy))
-				seq_printf(s, "orphaned_by: %d (%s)",
-					buf->pid, buf->task_comm);
-			else if (!clients_busy)
-				seq_printf(s, "missing x %d",
-					(buf_refcount-refs_found));
-			else
-				seq_puts(s,
-					"!!!some clients were busy!!!");
-		}
-
-		seq_puts(s, "\n");
 	}
 	mutex_unlock(&dev->buffer_lock);
-	up_read(&dev->lock);
-	return 0;
+
+	pr_info("[ION] total orphaned = %zu, total = %zu\n", total_orphaned_size, total_size);
+
+	return seq_printf(s, "%lu\n", total_size);
 }
 
-static int ion_debug_allbufs_open(struct inode *inode, struct file *file)
+static int ion_used_proc_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, ion_debug_allbufs_show, inode->i_private);
+	return single_open(file, ion_used_proc_read, inode->i_private);
 }
 
-static const struct file_operations debug_allbufs_fops = {
-	.open = ion_debug_allbufs_open,
+static struct file_operations proc_ion_used_operations = {
+	.owner = THIS_MODULE,
+	.open = ion_used_proc_open,
 	.read = seq_read,
 	.llseek = seq_lseek,
 	.release = single_release,
@@ -2153,8 +2088,7 @@ debugfs_done:
 	plist_head_init(&idev->heaps);
 	idev->clients = RB_ROOT;
 	ion_dev = idev;
-	debugfs_create_file("check_all_bufs", 0664, idev->debug_root, idev,
-			    &debug_allbufs_fops);
+	proc_create("ION_Used", S_IRWXUGO, NULL, &proc_ion_used_operations);
 	return idev;
 }
 

@@ -26,7 +26,6 @@
 #include <linux/mm.h>
 #include <linux/dma-attrs.h>
 #include <linux/uaccess.h>
-#include <linux/kthread.h>
 #include <asm/cacheflush.h>
 
 /* The number of memstore arrays limits the number of contexts allowed.
@@ -133,8 +132,6 @@ struct kgsl_driver {
 	unsigned int full_cache_threshold;
 	struct workqueue_struct *workqueue;
 	struct workqueue_struct *mem_workqueue;
-	struct kthread_worker worker;
-	struct task_struct *worker_thread;
 };
 
 extern struct kgsl_driver kgsl_driver;
@@ -278,7 +275,7 @@ struct kgsl_event {
 	void *priv;
 	struct list_head node;
 	unsigned int created;
-	struct kthread_work work;
+	struct work_struct work;
 	int result;
 	struct kgsl_event_group *group;
 };
@@ -380,10 +377,10 @@ long kgsl_ioctl_gpu_command(struct kgsl_device_private *dev_priv,
 long kgsl_ioctl_gpuobj_set_info(struct kgsl_device_private *dev_priv,
 				unsigned int cmd, void *data);
 
-void kgsl_get_egl_counts(struct kgsl_mem_entry *entry,
-		int *egl_surface_count, int *egl_image_count);
-
 void kgsl_mem_entry_destroy(struct kref *kref);
+
+void kgsl_get_egl_counts(struct kgsl_mem_entry *entry,
+			int *egl_surface_count, int *egl_image_count);
 
 struct kgsl_mem_entry * __must_check
 kgsl_sharedmem_find(struct kgsl_process_private *private, uint64_t gpuaddr);

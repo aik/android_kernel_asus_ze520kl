@@ -792,20 +792,9 @@ static u8 sdhci_calc_timeout(struct sdhci_host *host, struct mmc_command *cmd)
 	if (!data)
 		target_timeout = cmd->busy_timeout * 1000;
 	else {
-		target_timeout = DIV_ROUND_UP(data->timeout_ns, 1000);
-		if (host->clock && data->timeout_clks) {
-			unsigned long long val;
-
-			/*
-			 * data->timeout_clks is in units of clock cycles.
-			 * host->clock is in Hz.  target_timeout is in us.
-			 * Hence, us = 1000000 * cycles / Hz.  Round up.
-			 */
-			val = 1000000ULL * data->timeout_clks;
-			if (do_div(val, host->clock))
-				target_timeout++;
-			target_timeout += val;
-		}
+		target_timeout = data->timeout_ns / 1000;
+		if (host->clock)
+			target_timeout += data->timeout_clks / host->clock;
 	}
 
 	/*
@@ -2509,27 +2498,7 @@ static int sdhci_execute_tuning(struct mmc_host *mmc, u32 opcode)
 			ctrl &= ~SDHCI_CTRL_EXEC_TUNING;
 			sdhci_writew(host, ctrl, SDHCI_HOST_CONTROL2);
 
-			sdhci_do_reset(host, SDHCI_RESET_CMD);
-			sdhci_do_reset(host, SDHCI_RESET_DATA);
-
 			err = -EIO;
-
-			if (cmd.opcode != MMC_SEND_TUNING_BLOCK_HS200)
-				goto out;
-
-			sdhci_writel(host, host->ier, SDHCI_INT_ENABLE);
-			sdhci_writel(host, host->ier, SDHCI_SIGNAL_ENABLE);
-
-			spin_unlock_irqrestore(&host->lock, flags);
-
-			memset(&cmd, 0, sizeof(cmd));
-			cmd.opcode = MMC_STOP_TRANSMISSION;
-			cmd.flags = MMC_RSP_SPI_R1B | MMC_RSP_R1B | MMC_CMD_AC;
-			cmd.busy_timeout = 50;
-			mmc_wait_for_cmd(mmc, &cmd, 0);
-
-			spin_lock_irqsave(&host->lock, flags);
-
 			goto out;
 		}
 
@@ -2661,17 +2630,6 @@ static void sdhci_card_event(struct mmc_host *mmc)
 	spin_unlock_irqrestore(&host->lock, flags);
 }
 
-static int sdhci_select_drive_strength(struct mmc_host *mmc, int host_drv,
-		int card_drv)
-{
-	struct sdhci_host *host = mmc_priv(mmc);
-
-	if (host->ops && host->ops->select_drive_strength)
-		return host->ops->select_drive_strength(host, host_drv,
-				card_drv);
-	return 0;
-}
-
 static int sdhci_late_init(struct mmc_host *mmc)
 {
 	struct sdhci_host *host = mmc_priv(mmc);
@@ -2708,7 +2666,6 @@ static const struct mmc_host_ops sdhci_ops = {
 	.enhanced_strobe		= sdhci_enhanced_strobe,
 	.card_event			= sdhci_card_event,
 	.card_busy	= sdhci_card_busy,
-	.select_drive_strength          = sdhci_select_drive_strength,
 	.enable		= sdhci_enable,
 	.disable	= sdhci_disable,
 	.notify_load	= sdhci_notify_load,
@@ -3470,7 +3427,7 @@ static int sdhci_runtime_pm_put(struct sdhci_host *host)
 
 static void sdhci_runtime_pm_bus_on(struct sdhci_host *host)
 {
-	if (host->bus_on)
+	if (host->runtime_suspended || host->bus_on)
 		return;
 	host->bus_on = true;
 	pm_runtime_get_noresume(host->mmc->parent);
@@ -3478,7 +3435,7 @@ static void sdhci_runtime_pm_bus_on(struct sdhci_host *host)
 
 static void sdhci_runtime_pm_bus_off(struct sdhci_host *host)
 {
-	if (!host->bus_on)
+	if (host->runtime_suspended || !host->bus_on)
 		return;
 	host->bus_on = false;
 	pm_runtime_put_noidle(host->mmc->parent);
@@ -4014,13 +3971,13 @@ int sdhci_add_host(struct sdhci_host *host)
 		if (caps[0] & SDHCI_TIMEOUT_CLK_UNIT)
 			host->timeout_clk *= 1000;
 
-		if (override_timeout_clk)
-			host->timeout_clk = override_timeout_clk;
-
 		mmc->max_busy_timeout = host->ops->get_max_timeout_count ?
 			host->ops->get_max_timeout_count(host) : 1 << 27;
 		mmc->max_busy_timeout /= host->timeout_clk;
 	}
+
+	if (override_timeout_clk)
+		host->timeout_clk = override_timeout_clk;
 
 	mmc->caps |= MMC_CAP_SDIO_IRQ | MMC_CAP_ERASE | MMC_CAP_CMD23;
 	mmc->caps2 |= MMC_CAP2_SDIO_IRQ_NOTHREAD;

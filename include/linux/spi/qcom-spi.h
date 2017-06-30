@@ -35,7 +35,6 @@
  * @rt_priority true if RT thread
  * @use_pinctrl true if pinctrl library is used
  * @is_shared true when qup is shared between ee's
- * @use_hw_cs true if hardware should control the chip select
  */
 struct msm_spi_platform_data {
 	u32 max_clock_speed;
@@ -54,5 +53,4 @@ struct msm_spi_platform_data {
 	bool rt_priority;
 	bool use_pinctrl;
 	bool is_shared;
-	bool use_hw_cs;
 };

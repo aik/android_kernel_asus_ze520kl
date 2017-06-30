@@ -43,7 +43,6 @@
 #include <linux/hw_breakpoint.h>
 #include <linux/personality.h>
 #include <linux/notifier.h>
-#include <linux/vmalloc.h>
 
 #include <asm/compat.h>
 #include <asm/cacheflush.h>
@@ -269,58 +268,6 @@ void show_regs(struct pt_regs * regs)
 	__show_regs(regs);
 }
 
-#ifdef CONFIG_ARCH_THREAD_INFO_ALLOCATOR
-
-struct thread_info *alloc_thread_info_node(struct task_struct *tsk,
-						  int node)
-{
-	struct page *page = alloc_kmem_pages_node(node, (THREADINFO_GFP |
-			__GFP_NOWARN | __GFP_NORETRY) & ~__GFP_NOFAIL,
-			THREAD_SIZE_ORDER);
-	if (page)
-		return page_address(page);
-	else
-		return __vmalloc_node_range(THREAD_SIZE, THREAD_SIZE,
-			VMALLOC_START, VMALLOC_END, THREADINFO_GFP,
-			PAGE_KERNEL, 0, node, __builtin_return_address(0));
-}
-
-void free_thread_info(struct thread_info *ti)
-{
-	if (virt_is_valid_lowmem(ti))
-		free_kmem_pages((unsigned long)ti, THREAD_SIZE_ORDER);
-	else if (is_vmalloc_addr(ti))
-		vfree(ti);
-	else
-		BUG();
-}
-
-void arch_setup_thread_info(struct thread_info *ti)
-{
-	struct vm_struct *vm;
-
-	if (is_vmalloc_addr(ti)) {
-		vm = find_vm_area(ti);
-		if (vm)
-			ti->phys_addr = page_to_phys(vm->pages[0]);
-	}
-}
-
-void arch_account_kernel_stack(struct thread_info *ti, int account)
-{
-	struct zone *zone;
-
-	if (virt_is_valid_lowmem(ti))
-		zone = page_zone(virt_to_page(ti));
-	else if (is_vmalloc_addr(ti))
-		zone = page_zone(phys_to_page(ti->phys_addr));
-	else
-		BUG();
-	mod_zone_page_state(zone, NR_KERNEL_STACK, account);
-}
-
-#endif /* CONFIG_ARCH_THREAD_INFO_ALLOCATOR */
-
 /*
  * Free current thread data structures etc..
  */
@@ -487,6 +434,8 @@ unsigned long get_wchan(struct task_struct *p)
 
 unsigned long arch_align_stack(unsigned long sp)
 {
+	if (!(current->personality & ADDR_NO_RANDOMIZE) && randomize_va_space)
+		sp -= get_random_int() & ~PAGE_MASK;
 	return sp & ~0xf;
 }
 

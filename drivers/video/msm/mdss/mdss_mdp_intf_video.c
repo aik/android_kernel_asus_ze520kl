@@ -823,7 +823,6 @@ static int mdss_mdp_video_ctx_stop(struct mdss_mdp_ctl *ctl,
 	u32 frame_rate = 0;
 
 	mutex_lock(&ctl->offlock);
-	mutex_lock(&ctl->mfd->param_lock);
 	if (ctx->timegen_en) {
 		rc = mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_BLANK, NULL,
 			CTL_INTF_EVENT_FLAG_DEFAULT);
@@ -857,7 +856,6 @@ static int mdss_mdp_video_ctx_stop(struct mdss_mdp_ctl *ctl,
 
 	ctx->ref_cnt--;
 end:
-	mutex_unlock(&ctl->mfd->param_lock);
 	mutex_unlock(&ctl->offlock);
 	return rc;
 }
@@ -1322,7 +1320,6 @@ static int mdss_mdp_video_config_fps(struct mdss_mdp_ctl *ctl, int new_fps)
 	}
 
 	mutex_lock(&ctl->offlock);
-	mutex_lock(&ctl->mfd->param_lock);
 	pdata = ctl->panel_data;
 	if (pdata == NULL) {
 		pr_err("%s: Invalid panel data\n", __func__);
@@ -1451,7 +1448,6 @@ exit_dfps:
 
 end:
 	MDSS_XLOG(ctl->num, new_fps, XLOG_FUNC_EXIT);
-	mutex_unlock(&ctl->mfd->param_lock);
 	mutex_unlock(&ctl->offlock);
 	return rc;
 }
@@ -2030,6 +2026,8 @@ void mdss_mdp_switch_to_cmd_mode(struct mdss_mdp_ctl *ctl, int prep)
 	mdss_bus_bandwidth_ctrl(false);
 }
 
+extern int g_fps_customise_update;
+
 static void early_wakeup_dfps_update_work(struct work_struct *work)
 {
 	struct mdss_mdp_video_ctx *ctx =
@@ -2076,6 +2074,10 @@ static void early_wakeup_dfps_update_work(struct work_struct *work)
 	}
 
 	data.fps = dfps;
+	//fix DFPS austin+++	
+	if (g_fps_customise_update != pdata->panel_info.default_fps)
+		data.fps = g_fps_customise_update;
+	
 	if (mdss_mdp_dfps_update_params(mfd, pdata, &data))
 		pr_err("failed to set dfps params!\n");
 

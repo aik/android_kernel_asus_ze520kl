@@ -41,8 +41,6 @@ static const char *of_stdout_options;
 
 struct kset *of_kset;
 
-static struct device_node *__of_find_node_by_path(const char *path, const char **opts);
-
 /*
  * Used to protect the of_aliases, to hold off addition of nodes to sysfs.
  * This mutex must be held whenever modifications are being made to the
@@ -114,7 +112,6 @@ static ssize_t of_node_property_read(struct file *filp, struct kobject *kobj,
 	return memory_read_from_buffer(buf, count, &offset, pp->value, pp->length);
 }
 
-/* always return newly allocated name, caller must free after use */
 static const char *safe_name(struct kobject *kobj, const char *orig_name)
 {
 	const char *name = orig_name;
@@ -129,12 +126,9 @@ static const char *safe_name(struct kobject *kobj, const char *orig_name)
 		name = kasprintf(GFP_KERNEL, "%s#%i", orig_name, ++i);
 	}
 
-	if (name == orig_name) {
-		name = kstrdup(orig_name, GFP_KERNEL);
-	} else {
+	if (name != orig_name)
 		pr_warn("device-tree: Duplicate name in %s, renamed to \"%s\"\n",
 			kobject_name(kobj), name);
-	}
 	return name;
 }
 
@@ -165,7 +159,6 @@ int __of_add_property_sysfs(struct device_node *np, struct property *pp)
 int __of_attach_node_sysfs(struct device_node *np)
 {
 	const char *name;
-	struct kobject *parent;
 	struct property *pp;
 	int rc;
 
@@ -178,16 +171,15 @@ int __of_attach_node_sysfs(struct device_node *np)
 	np->kobj.kset = of_kset;
 	if (!np->parent) {
 		/* Nodes without parents are new top level trees */
-		name = safe_name(&of_kset->kobj, "base");
-		parent = NULL;
+		rc = kobject_add(&np->kobj, NULL, "%s",
+				 safe_name(&of_kset->kobj, "base"));
 	} else {
 		name = safe_name(&np->parent->kobj, kbasename(np->full_name));
-		parent = &np->parent->kobj;
+		if (!name || !name[0])
+			return -EINVAL;
+
+		rc = kobject_add(&np->kobj, &np->parent->kobj, "%s", name);
 	}
-	if (!name)
-		return -ENOMEM;
-	rc = kobject_add(&np->kobj, parent, "%s", name);
-	kfree(name);
 	if (rc)
 		return rc;
 
@@ -531,51 +523,24 @@ EXPORT_SYMBOL(of_machine_is_compatible);
  *
  *  @device: Node to check for availability, with locks already held
  *
- *  Returns true if the status property
- *  -- is absent or set to "okay" or "ok",
- *  -- refers to another property using string list as following
- *     status = <path>, <okay property>, <value1>[, <value2>...];
- *     and at least one <value> in the list of values matches
- *     value of /<path>/<okay property>.
+ *  Returns true if the status property is absent or set to "okay" or "ok",
  *  false otherwise
  */
 static bool __of_device_is_available(const struct device_node *device)
 {
-	struct property *pp;
-	struct device_node *np;
-	const char *val, *status;
-	const char *okay_prop_name, *okay_val;
-	int len;
+	const char *status;
+	int statlen;
 
 	if (!device)
 		return false;
 
-	pp = __of_find_property(device, "status", &len);
-	if (pp == NULL)
+	status = __of_get_property(device, "status", &statlen);
+	if (status == NULL)
 		return true;
 
-	status = pp->value;
-
-	if (len > 0) {
+	if (statlen > 0) {
 		if (!strcmp(status, "okay") || !strcmp(status, "ok"))
 			return true;
-
-		okay_prop_name = of_prop_next_string(pp, status);
-		if (!okay_prop_name)
-			return false;
-
-		np = __of_find_node_by_path(status, NULL);
-		if (!np)
-			return false;
-
-		okay_val = __of_get_property(np, okay_prop_name, &len);
-		if (okay_val == NULL || len <= 0)
-			return false;
-
-		val = okay_prop_name;
-		while ((val = of_prop_next_string(pp, val)))
-			if (!strcmp(val, okay_val))
-				return true;
 	}
 
 	return false;
@@ -745,7 +710,7 @@ struct device_node *of_get_child_by_name(const struct device_node *node,
 }
 EXPORT_SYMBOL(of_get_child_by_name);
 
-static struct device_node *__of_find_child_node_by_path(struct device_node *parent,
+static struct device_node *__of_find_node_by_path(struct device_node *parent,
 						const char *path)
 {
 	struct device_node *child;
@@ -766,10 +731,29 @@ static struct device_node *__of_find_child_node_by_path(struct device_node *pare
 	return NULL;
 }
 
-static struct device_node *__of_find_node_by_path(const char *path, const char **opts)
+/**
+ *	of_find_node_opts_by_path - Find a node matching a full OF path
+ *	@path: Either the full path to match, or if the path does not
+ *	       start with '/', the name of a property of the /aliases
+ *	       node (an alias).  In the case of an alias, the node
+ *	       matching the alias' value will be returned.
+ *	@opts: Address of a pointer into which to store the start of
+ *	       an options string appended to the end of the path with
+ *	       a ':' separator.
+ *
+ *	Valid paths:
+ *		/foo/bar	Full path
+ *		foo		Valid alias
+ *		foo/bar		Valid alias + relative path
+ *
+ *	Returns a node pointer with refcount incremented, use
+ *	of_node_put() on it when done.
+ */
+struct device_node *of_find_node_opts_by_path(const char *path, const char **opts)
 {
 	struct device_node *np = NULL;
 	struct property *pp;
+	unsigned long flags;
 	const char *separator = strchr(path, ':');
 
 	if (opts)
@@ -793,7 +777,7 @@ static struct device_node *__of_find_node_by_path(const char *path, const char *
 
 		for_each_property_of_node(of_aliases, pp) {
 			if (strlen(pp->name) == len && !strncmp(pp->name, path, len)) {
-				np = __of_find_node_by_path(pp->value, NULL);
+				np = of_find_node_by_path(pp->value);
 				break;
 			}
 		}
@@ -803,46 +787,16 @@ static struct device_node *__of_find_node_by_path(const char *path, const char *
 	}
 
 	/* Step down the tree matching path components */
+	raw_spin_lock_irqsave(&devtree_lock, flags);
 	if (!np)
 		np = of_node_get(of_root);
 	while (np && *path == '/') {
 		path++; /* Increment past '/' delimiter */
-		np = __of_find_child_node_by_path(np, path);
+		np = __of_find_node_by_path(np, path);
 		path = strchrnul(path, '/');
 		if (separator && separator < path)
 			break;
 	}
-	return np;
-}
-
-/**
- *	of_find_node_opts_by_path - Find a node matching a full OF path
- *	@path: Either the full path to match, or if the path does not
- *	       start with '/', the name of a property of the /aliases
- *	       node (an alias).  In the case of an alias, the node
- *	       matching the alias' value will be returned.
- *	@opts: Address of a pointer into which to store the start of
- *	       an options string appended to the end of the path with
- *	       a ':' separator.
- *
- *	Valid paths:
- *		/foo/bar	Full path
- *		foo		Valid alias
- *		foo/bar		Valid alias + relative path
- *
- *	Returns a node pointer with refcount incremented, use
- *	of_node_put() on it when done.
- */
-struct device_node *of_find_node_opts_by_path(const char *path, const char **opts)
-{
-	struct device_node *np;
-	unsigned long flags;
-
-	if (strcmp(path, "/") == 0)
-		return of_node_get(of_root);
-
-	raw_spin_lock_irqsave(&devtree_lock, flags);
-	np = __of_find_node_by_path(path, opts);
 	raw_spin_unlock_irqrestore(&devtree_lock, flags);
 	return np;
 }
@@ -1780,12 +1734,6 @@ int __of_remove_property(struct device_node *np, struct property *prop)
 	return 0;
 }
 
-void __of_sysfs_remove_bin_file(struct device_node *np, struct property *prop)
-{
-	sysfs_remove_bin_file(&np->kobj, &prop->attr);
-	kfree(prop->attr.attr.name);
-}
-
 void __of_remove_property_sysfs(struct device_node *np, struct property *prop)
 {
 	if (!IS_ENABLED(CONFIG_SYSFS))
@@ -1793,7 +1741,7 @@ void __of_remove_property_sysfs(struct device_node *np, struct property *prop)
 
 	/* at early boot, bail here and defer setup to of_init() */
 	if (of_kset && of_node_is_attached(np))
-		__of_sysfs_remove_bin_file(np, prop);
+		sysfs_remove_bin_file(&np->kobj, &prop->attr);
 }
 
 /**
@@ -1863,7 +1811,7 @@ void __of_update_property_sysfs(struct device_node *np, struct property *newprop
 		return;
 
 	if (oldprop)
-		__of_sysfs_remove_bin_file(np, oldprop);
+		sysfs_remove_bin_file(&np->kobj, &oldprop->attr);
 	__of_add_property_sysfs(np, newprop);
 }
 

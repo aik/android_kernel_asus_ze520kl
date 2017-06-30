@@ -42,10 +42,6 @@ struct msm_flash_func_t {
 		struct msm_flash_cfg_data_t *);
 	int32_t (*camera_flash_high)(struct msm_flash_ctrl_t *,
 		struct msm_flash_cfg_data_t *);
-	int32_t (*camera_flash_read)(struct msm_flash_ctrl_t *,
-		struct msm_flash_cfg_data_t *);
-	int32_t (*camera_flash_write)(struct msm_flash_ctrl_t *,
-		struct msm_flash_cfg_data_t *);
 };
 
 struct msm_flash_table {
@@ -79,10 +75,6 @@ struct msm_flash_ctrl_t {
 	uint32_t flash_op_current[MAX_LED_TRIGGERS];
 	uint32_t flash_max_current[MAX_LED_TRIGGERS];
 	uint32_t flash_max_duration[MAX_LED_TRIGGERS];
-	/* Alternate flash parameters used for MUXing 2 LEDs to 1 controller */
-	uint32_t flash_alt_op_current[MAX_LED_TRIGGERS];
-	uint32_t flash_alt_max_current[MAX_LED_TRIGGERS];
-	uint32_t flash_alt_max_duration[MAX_LED_TRIGGERS];
 
 	/* Torch */
 	uint32_t torch_num_sources;
@@ -90,9 +82,6 @@ struct msm_flash_ctrl_t {
 	struct led_trigger *torch_trigger[MAX_LED_TRIGGERS];
 	uint32_t torch_op_current[MAX_LED_TRIGGERS];
 	uint32_t torch_max_current[MAX_LED_TRIGGERS];
-	/* Alternate torch parameters used for MUXing 2 LEDs to 1 controller */
-	uint32_t torch_alt_op_current[MAX_LED_TRIGGERS];
-	uint32_t torch_alt_max_current[MAX_LED_TRIGGERS];
 
 	void *data;
 	enum msm_camera_device_type_t flash_device_type;
@@ -106,6 +95,9 @@ struct msm_flash_ctrl_t {
 
 	/* flash state */
 	enum msm_camera_flash_state_t flash_state;
+       enum msm_camera_flash_state_t flashlight_state;
+
+	uint8_t ref_count;
 };
 
 int msm_flash_i2c_probe(struct i2c_client *client,

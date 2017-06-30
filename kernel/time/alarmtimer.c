@@ -31,6 +31,10 @@
 #endif
 #include <linux/workqueue.h>
 
+/* +++ ASUS_BSP Show Power on device earlier then user expiration */
+//#define ALARM_DELTA 120
+/* --- ASUS_BSP Show Power on device earlier then user expiration */
+
 /**
  * struct alarm_base - Alarm timer bases
  * @lock:		Lock for syncrhonized access to the base
@@ -94,30 +98,6 @@ void power_on_alarm_init(void)
 }
 
 /**
- * power_on_alarm_empty - return if the Power ON Alarm queue has a node
- *
- */
-int power_on_alarm_empty(void)
-{
-	unsigned long flags;
-	struct timerqueue_node *next;
-	struct alarm_base *base = &alarm_bases[ALARM_POWEROFF_REALTIME];
-
-	if (!base)
-		return -EINVAL;
-
-	spin_lock_irqsave(&base->lock, flags);
-	next = timerqueue_getnext(&base->timerqueue);
-	spin_unlock_irqrestore(&base->lock, flags);
-
-	if (next)
-		return 0;
-
-	/* Power ON Alarm Queue Empty */
-	return 1;
-}
-
-/**
  * set_power_on_alarm - set power on alarm value into rtc register
  *
  * Get the soonest power off alarm timer and set the alarm value into rtc
@@ -170,6 +150,14 @@ void set_power_on_alarm(void)
 	rtc_tm_to_time(&rtc_time, &rtc_secs);
 	alarm_delta = wall_time.tv_sec - rtc_secs;
 	alarm_time = alarm_secs - alarm_delta;
+	
+	/* +++ ASUS_BSP Show Power on device earlier then user expiration */
+	/*if((alarm_time - ALARM_DELTA) > rtc_secs){
+		alarm_time -= ALARM_DELTA;
+	}else{
+		goto disable_alarm;
+	}*/
+	/* --- ASUS_BSP Show Power on device earlier then user expiration */
 
 	rtc_time_to_tm(alarm_time, &alarm.time);
 	alarm.enabled = 1;
@@ -1048,7 +1036,7 @@ static int alarm_timer_nsleep(const clockid_t which_clock, int flags,
 			goto out;
 	}
 
-	restart = &current->restart_block;
+	restart = &current_thread_info()->restart_block;
 	restart->fn = alarm_timer_nsleep_restart;
 	restart->nanosleep.clockid = type;
 	restart->nanosleep.expires = exp.tv64;

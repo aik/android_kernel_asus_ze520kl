@@ -56,7 +56,6 @@ int smp_call_function_single_async(int cpu, struct call_single_data *csd);
 #include <linux/kernel.h>
 #include <linux/compiler.h>
 #include <linux/thread_info.h>
-#include <asm/percpu.h>
 #include <asm/smp.h>
 
 /*
@@ -101,7 +100,7 @@ int smp_call_function_any(const struct cpumask *mask,
 			  smp_call_func_t func, void *info, int wait);
 
 void kick_all_cpus_sync(void);
-void wake_up_idle_cpus(const struct cpumask *mask);
+void wake_up_all_idle_cpus(void);
 
 /*
  * Generic and arch helpers
@@ -150,7 +149,7 @@ smp_call_function_any(const struct cpumask *mask, smp_call_func_t func,
 }
 
 static inline void kick_all_cpus_sync(void) {  }
-static inline void wake_up_idle_cpus(const struct cpumask *mask) {  }
+static inline void wake_up_all_idle_cpus(void) {  }
 
 #endif /* !SMP */
 
@@ -178,19 +177,6 @@ static inline void wake_up_idle_cpus(const struct cpumask *mask) {  }
 
 #define get_cpu()		({ preempt_disable(); smp_processor_id(); })
 #define put_cpu()		preempt_enable()
-
-#ifdef CONFIG_LOCKUP_IPI_CALL_WDT
-DECLARE_PER_CPU(int, csd_lock_waiting_flag);
-static inline int is_csd_lock_waiting(void)
-{
-	return __get_cpu_var(csd_lock_waiting_flag);
-}
-#else
-static inline int is_csd_lock_waiting(void)
-{
-	return 0;
-}
-#endif
 
 /*
  * Callback to arch code if there's nosmp or maxcpus=0 on the

@@ -23,7 +23,6 @@
 #include <linux/export.h>
 #include <linux/hid.h>
 #include <linux/module.h>
-#include <linux/freezer.h>
 #include <asm/unaligned.h>
 
 #include <linux/usb/composite.h>
@@ -690,6 +689,7 @@ static void ffs_user_copy_worker(struct work_struct *work)
 
 	usb_ep_free_request(io_data->ep, io_data->req);
 
+	io_data->kiocb->private = NULL;
 	if (io_data->read)
 		kfree(io_data->iovec);
 	kfree(io_data->buf);
@@ -748,7 +748,7 @@ static ssize_t ffs_epfile_io(struct file *file, struct ffs_io_data *io_data)
 		 * and wait for next epfile open to happen
 		 */
 		if (!atomic_read(&epfile->error)) {
-			ret = wait_event_freezable(epfile->wait,
+			ret = wait_event_interruptible(epfile->wait,
 					(ep = epfile->ep));
 			if (ret < 0)
 				goto error;
@@ -3577,8 +3577,6 @@ static void ffs_closed(struct ffs_data *ffs)
 	    || !atomic_read(&opts->func_inst.group.cg_item.ci_kref.refcount))
 		goto done;
 
-	unregister_gadget_item(ffs_obj->opts->
-			       func_inst.group.cg_item.ci_parent->ci_parent);
 done:
 	ffs_dev_unlock();
 }

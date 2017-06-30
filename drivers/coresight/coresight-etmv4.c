@@ -3356,10 +3356,10 @@ static int etm_late_init(struct etm_drvdata *drvdata)
 
 	etm_init_default_data(drvdata);
 
-	baddr = devm_kzalloc(dev, drvdata->reg_size * 2, GFP_KERNEL);
+	baddr = devm_kzalloc(dev, drvdata->reg_size, GFP_KERNEL);
 	if (baddr) {
 		drvdata->reg_data.addr = virt_to_phys(baddr);
-		drvdata->reg_data.len = drvdata->reg_size * 2;
+		drvdata->reg_data.len = drvdata->reg_size;
 		dump_entry.id = MSM_DUMP_DATA_ETM_REG + drvdata->cpu;
 		dump_entry.addr = virt_to_phys(&drvdata->reg_data);
 		ret = msm_dump_data_register(MSM_DUMP_TABLE_APPS,
@@ -3702,10 +3702,8 @@ err1:
 		unregister_hotcpu_notifier(&etm_cpu_notifier);
 		unregister_hotcpu_notifier(&etm_cpu_dying_notifier);
 	}
-	etmdrvdata[cpu] = NULL;
 err0:
 	wakeup_source_trash(&drvdata->ws);
-	platform_set_drvdata(pdev, NULL);
 	return ret;
 }
 

@@ -44,8 +44,24 @@
 							217, void *)
 #define AUDIO_SET_RTAC_AFE_CAL		_IOWR(CAL_IOCTL_MAGIC, \
 							218, void *)
-#define MAX_SIDETONE_IIR_DATA_SIZE	220
-#define MAX_NO_IIR_FILTER_STAGE		10
+
+/* ASUS_BSP Paul +++ */
+#define AUDIO_SET_CODEC_REG			_IOWR(CAL_IOCTL_MAGIC, \
+							219, void *)
+#define AUDIO_GET_CODEC_REG			_IOWR(CAL_IOCTL_MAGIC, \
+							220, void *)
+#define AUDIO_SET_AUDIOWIZARD_FORCE_PRESET	_IOWR(CAL_IOCTL_MAGIC, \
+							221, void *)
+/* ASUS_BSP Paul --- */
+
+/* ASUS_BSP Eric +++ */
+#define AUDIO_GET_HS_IMP			_IOWR(CAL_IOCTL_MAGIC, \
+							230, void *)
+/* ASUS_BSP Eric --- */
+//Jacob cherry pick ZE500KL change +++
+#define AUDIO_SET_MODE _IOWR(CAL_IOCTL_MAGIC, 225, void *)
+extern int get_audiomode(void);
+//Jacob cherry pick ZE500KL change ---
 
 enum {
 	CVP_VOC_RX_TOPOLOGY_CAL_TYPE = 0,
@@ -74,7 +90,6 @@ enum {
 	AFE_FB_SPKR_PROT_CAL_TYPE,
 	AFE_HW_DELAY_CAL_TYPE,
 	AFE_SIDETONE_CAL_TYPE,
-	AFE_SIDETONE_IIR_CAL_TYPE,
 	AFE_TOPOLOGY_CAL_TYPE,
 	AFE_CUST_TOPOLOGY_CAL_TYPE,
 
@@ -98,6 +113,18 @@ enum {
 
 	CORE_CUSTOM_TOPOLOGIES_CAL_TYPE,
 	ADM_RTAC_AUDVOL_CAL_TYPE,
+
+	/* ASUS_BSP Paul +++ */
+	CODEC_REG_TYPE,
+	AUDIOWIZARD_FORCE_PRESET_TYPE,
+	SKYPE_STATE_TYPE,
+	/* ASUS_BSP Paul --- */
+	//Sharon++
+	SET_MODE_TYPE,
+	//Sharon--
+	/* ASUS_BSP Eric +++*/
+	GET_IMP_TYPE,
+	/* ASUS_BSP Eric ---*/
 
 	ULP_LSM_TOPOLOGY_ID_CAL_TYPE,
 	AFE_FB_SPKR_PROT_TH_VI_CAL_TYPE,
@@ -350,17 +377,6 @@ struct audio_cal_info_sidetone {
 	int32_t		pid;
 };
 
-struct audio_cal_info_sidetone_iir {
-	uint16_t	iir_enable;
-	uint16_t	num_biquad_stages;
-	uint16_t	pregain;
-	uint8_t		iir_config[MAX_SIDETONE_IIR_DATA_SIZE];
-	int32_t		tx_acdb_id;
-	int32_t		rx_acdb_id;
-	int32_t		mid;
-	int32_t		pid;
-};
-
 struct audio_cal_info_lsm_top {
 	int32_t		topology;
 	int32_t		acdb_id;
@@ -593,17 +609,6 @@ struct audio_cal_type_sidetone {
 struct audio_cal_sidetone {
 	struct audio_cal_header			hdr;
 	struct audio_cal_type_sidetone		cal_type;
-};
-
-struct audio_cal_type_sidetone_iir {
-	struct audio_cal_type_header		cal_hdr;
-	struct audio_cal_data			cal_data;
-	struct audio_cal_info_sidetone_iir	cal_info;
-};
-
-struct audio_cal_sidetone_iir {
-	struct audio_cal_header			hdr;
-	struct audio_cal_type_sidetone_iir	cal_type;
 };
 
 struct audio_cal_type_lsm_top {

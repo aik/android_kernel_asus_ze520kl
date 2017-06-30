@@ -55,14 +55,15 @@ static void __iomem *msm_ps_hold;
 static phys_addr_t tcsr_boot_misc_detect;
 static void scm_disable_sdi(void);
 
-#ifdef CONFIG_MSM_DLOAD_MODE
+
 /* Runtime could be only changed value once.
 * There is no API from TZ to re-enable the registers.
 * So the SDI cannot be re-enabled when it already by-passed.
 */
-static int download_mode = 1;
+#ifdef ASUS_SHIP_BUILD
+static int download_mode = 0;
 #else
-static const int download_mode;
+static int download_mode = 1;
 #endif
 
 #ifdef CONFIG_MSM_DLOAD_MODE
@@ -266,6 +267,7 @@ static void halt_spmi_pmic_arbiter(void)
 
 static void msm_restart_prepare(const char *cmd)
 {
+	ulong *printk_buffer_slot2_addr;
 	bool need_warm_reset = false;
 
 #ifdef CONFIG_MSM_DLOAD_MODE
@@ -281,20 +283,26 @@ static void msm_restart_prepare(const char *cmd)
 
 	if (qpnp_pon_check_hard_reset_stored()) {
 		/* Set warm reset as true when device is in dload mode */
-		if (get_dload_mode() ||
+		if (get_dload_mode() || in_panic ||
 			((cmd != NULL && cmd[0] != '\0') &&
 			!strcmp(cmd, "edl")))
 			need_warm_reset = true;
 	} else {
-		need_warm_reset = (get_dload_mode() ||
+		need_warm_reset = (get_dload_mode() || in_panic ||
 				(cmd != NULL && cmd[0] != '\0'));
 	}
 
 	/* Hard reset the PMIC unless memory contents must be maintained. */
-	if (need_warm_reset || in_panic) {
+	if (need_warm_reset) {
 		qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
 	} else {
 		qpnp_pon_system_pwr_off(PON_POWER_OFF_HARD_RESET);
+	}
+	
+	if (!in_panic) {
+		// Normal reboot. Clean the printk buffer magic
+		printk_buffer_slot2_addr = (ulong *)PRINTK_BUFFER_SLOT2;
+		*printk_buffer_slot2_addr = 0;
 	}
 
 	if (cmd != NULL) {
@@ -302,14 +310,6 @@ static void msm_restart_prepare(const char *cmd)
 			qpnp_pon_set_restart_reason(
 				PON_RESTART_REASON_BOOTLOADER);
 			__raw_writel(0x77665500, restart_reason);
-			/* set reboot_bl flag in PMIC for cold reset */
-			qpnp_pon_store_extra_reset_info(RESET_EXTRA_REBOOT_BL_REASON,
-				RESET_EXTRA_REBOOT_BL_REASON);
-			/*
-			 * force cold reboot here to avoid impaction from
-			 * modem double reboot workaround solution.
-			 */
-			qpnp_pon_system_pwr_off(PON_POWER_OFF_HARD_RESET);
 		} else if (!strncmp(cmd, "recovery", 8)) {
 			qpnp_pon_set_restart_reason(
 				PON_RESTART_REASON_RECOVERY);
@@ -330,7 +330,16 @@ static void msm_restart_prepare(const char *cmd)
 			qpnp_pon_set_restart_reason(
 				PON_RESTART_REASON_KEYS_CLEAR);
 			__raw_writel(0x7766550a, restart_reason);
-		} else if (!strncmp(cmd, "oem-", 4)) {
+		}
+		// +++ ASUS_BSP: add asus reboot reason for ATD interface
+		else if (!strcmp(cmd, "shutdown")) {
+			__raw_writel(0x6f656d88, restart_reason);
+		}
+		else if (!strcmp(cmd, "EnterShippingMode")) {
+			__raw_writel(0x6f656d43, restart_reason);
+		}
+		// --- ASUS_BSP: add asus reboot reason for ATD interface
+		else if (!strncmp(cmd, "oem-", 4)) {
 			unsigned long code;
 			int ret;
 			ret = kstrtoul(cmd + 4, 16, &code);
@@ -339,32 +348,9 @@ static void msm_restart_prepare(const char *cmd)
 					     restart_reason);
 		} else if (!strncmp(cmd, "edl", 3)) {
 			enable_emergency_dload_mode();
-		} else if (!strncmp(cmd, "post-wdt", 8)) {
-			/* set  flag in PMIC to nofity BL post watchdog reboot */
-			qpnp_pon_store_extra_reset_info(RESET_EXTRA_POST_REBOOT_MASK,
-				RESET_EXTRA_POST_WDT_REASON);
-			 /* force cold reboot */
-			qpnp_pon_system_pwr_off(PON_POWER_OFF_HARD_RESET);
-		} else if (!strncmp(cmd, "post-pmicwdt", 12)) {
-			/* set  flag in PMIC to nofity BL post pmic watchdog reboot */
-			qpnp_pon_store_extra_reset_info(RESET_EXTRA_POST_REBOOT_MASK,
-				RESET_EXTRA_POST_PMICWDT_REASON);
-			 /* force cold reboot */
-			qpnp_pon_system_pwr_off(PON_POWER_OFF_HARD_RESET);
-		} else if (!strncmp(cmd, "post-panic", 10)) {
-			/* set  flag in PMIC to nofity BL post panic reboot */
-			qpnp_pon_store_extra_reset_info(RESET_EXTRA_POST_REBOOT_MASK,
-				RESET_EXTRA_POST_PANIC_REASON);
-			 /* force cold reboot */
-			qpnp_pon_system_pwr_off(PON_POWER_OFF_HARD_RESET);
 		} else {
 			__raw_writel(0x77665501, restart_reason);
 		}
-	} else if (in_panic == 1) {
-		__raw_writel(0x77665505, restart_reason);
-		qpnp_pon_store_extra_reset_info(RESET_EXTRA_PANIC_REASON, 0xFF);
-	} else {
-		__raw_writel(0x77665501, restart_reason);
 	}
 
 	flush_cache_all();
@@ -405,6 +391,7 @@ static void do_msm_restart(enum reboot_mode reboot_mode, const char *cmd)
 	pr_notice("Going down for restart now\n");
 
 	msm_restart_prepare(cmd);
+	flush_cache_all();
 
 #ifdef CONFIG_MSM_DLOAD_MODE
 	/*
@@ -425,8 +412,16 @@ static void do_msm_restart(enum reboot_mode reboot_mode, const char *cmd)
 
 static void do_msm_poweroff(void)
 {
+	ulong *printk_buffer_slot2_addr;
+
 	pr_notice("Powering off the SoC\n");
 
+	// Normal power off. Clean the printk buffer magic
+	printk_buffer_slot2_addr = (ulong *)PRINTK_BUFFER_SLOT2;
+	*printk_buffer_slot2_addr = 0;
+
+	printk(KERN_CRIT "Clean asus_global...\n");
+	flush_cache_all();
 	set_dload_mode(0);
 	scm_disable_sdi();
 	qpnp_pon_system_pwr_off(PON_POWER_OFF_SHUTDOWN);
@@ -477,10 +472,6 @@ static ssize_t show_emmc_dload(struct kobject *kobj, struct attribute *attr,
 				char *buf)
 {
 	uint32_t read_val, show_val;
-
-	if (dload_type_addr == NULL) {
-		return snprintf(buf, 8, "%s\n", "No Node");
-	}
 
 	read_val = __raw_readl(dload_type_addr);
 	if (read_val == EMMC_DLOAD_TYPE)

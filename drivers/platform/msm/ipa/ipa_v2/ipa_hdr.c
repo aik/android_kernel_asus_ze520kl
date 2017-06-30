@@ -835,7 +835,7 @@ static int __ipa_del_hdr_proc_ctx(u32 proc_ctx_hdl,
 	}
 
 	if (release_hdr)
-		__ipa_del_hdr(entry->hdr->id, false);
+		__ipa_del_hdr(entry->hdr->id,false);
 
 	/* move the offset entry to appropriate free list */
 	list_move(&entry->offset_entry->link,

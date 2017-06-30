@@ -449,6 +449,9 @@ enum event_buf_type {
 	EVT_BUF_TYPE_GSI
 };
 
+#define DWC_CTRL_COUNT	10
+#define NUM_LOG_PAGES	12
+
 /**
  * struct dwc3_event_buffer - Software event buffer representation
  * @buf: _THE_ buffer
@@ -747,6 +750,9 @@ struct dwc3_scratchpad_array {
 #define DWC3_CONTROLLER_SET_CURRENT_DRAW_EVENT		10
 #define DWC3_CONTROLLER_RESTART_USB_SESSION		11
 #define DWC3_CONTROLLER_NOTIFY_DISABLE_UPDXFER		12
+#if defined(CONFIG_UNKNOWN_CHARGER)
+#define DWC3_CONTROLLER_NOTIFY_RESET        13
+#endif
 
 #define MAX_INTR_STATS					10
 /**
@@ -825,12 +831,12 @@ struct dwc3_scratchpad_array {
  * @irq: irq number
  * @bh: tasklet which handles the interrupt
  * @irq_cnt: total irq count
- * @err_cnt: total error count
  * @bh_completion_time: time taken for taklet completion
  * @bh_handled_evt_cnt: no. of events handled by tasklet per interrupt
  * @bh_dbg_index: index for capturing bh_completion_time and bh_handled_evt_cnt
  * @wait_linkstate: waitqueue for waiting LINK to move into required state
  * @vbus_draw: current to be drawn from USB
+ * @dwc_ipc_log_ctxt: dwc3 ipa log context
  */
 struct dwc3 {
 	struct usb_ctrlrequest	*ctrl_req;
@@ -973,7 +979,6 @@ struct dwc3 {
 	struct tasklet_struct	bh;
 	unsigned long		irq_cnt;
 	unsigned long		ep_cmd_timeout_cnt;
-	unsigned long		err_cnt;
 	unsigned                bh_completion_time[MAX_INTR_STATS];
 	unsigned                bh_handled_evt_cnt[MAX_INTR_STATS];
 	unsigned                bh_dbg_index;
@@ -984,9 +989,7 @@ struct dwc3 {
 	unsigned                irq_dbg_index;
 
 	wait_queue_head_t	wait_linkstate;
-	u8			ctrl_num;
-	unsigned		xhci_limit_arbitrary_sg:1;
-	unsigned		xhci_panic_on_wdog:1;
+	void			*dwc_ipc_log_ctxt;
 };
 
 /* -------------------------------------------------------------------------- */

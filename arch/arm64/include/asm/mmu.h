@@ -36,5 +36,4 @@ extern void create_pgd_mapping(struct mm_struct *mm, phys_addr_t phys,
 			       unsigned long virt, phys_addr_t size,
 			       pgprot_t prot);
 
-extern void __iomem *early_io_map(phys_addr_t phys, unsigned long virt);
 #endif

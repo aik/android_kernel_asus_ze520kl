@@ -28,7 +28,6 @@
 
 #include <linux/irqchip/arm-gic-v3.h>
 #include <linux/syscore_ops.h>
-#include <linux/wakeup_reason.h>
 
 #include <asm/cputype.h>
 #include <asm/exception.h>
@@ -200,7 +199,7 @@ static void gic_enable_redist(bool enable)
 			return;	/* No PM support in this redistributor */
 	}
 
-	while (--count) {
+	while (count--) {
 		val = readl_relaxed(rbase + GICR_WAKER);
 		if (enable ^ (val & GICR_WAKER_ChildrenAsleep))
 			break;
@@ -386,7 +385,7 @@ static void gic_show_resume_irq(struct gic_chip_data *gic)
 		else if (desc->action && desc->action->name)
 			name = desc->action->name;
 
-		log_wakeup_reason(irq);
+		pr_warn("%s: %d triggered %s\n", __func__, irq, name);
 	}
 }
 
@@ -458,13 +457,6 @@ static asmlinkage void __exception_irq_entry gic_handle_irq(struct pt_regs *regs
 			uncached_logk(LOGK_IRQ, (void *)(uintptr_t)irqnr);
 			gic_write_eoir(irqnr);
 #ifdef CONFIG_SMP
-			/*
-			 * Unlike GICv2, we don't need an smp_rmb() here.
-			 * The control dependency from gic_read_iar to
-			 * the ISB in gic_write_eoir is enough to ensure
-			 * that any shared data read by handle_IPI will
-			 * be read after the ACK.
-			 */
 			handle_IPI(irqnr, regs);
 #else
 			WARN_ONCE(true, "Unexpected SGI received!\n");
@@ -662,19 +654,15 @@ out:
 	return tlist;
 }
 
-#define MPIDR_TO_SGI_AFFINITY(cluster_id, level) \
-	(MPIDR_AFFINITY_LEVEL(cluster_id, level) \
-		<< ICC_SGI1R_AFFINITY_## level ##_SHIFT)
-
 static void gic_send_sgi(u64 cluster_id, u16 tlist, unsigned int irq)
 {
 	u64 val;
 
-	val = (MPIDR_TO_SGI_AFFINITY(cluster_id, 3)	|
-	       MPIDR_TO_SGI_AFFINITY(cluster_id, 2)	|
-	       irq << ICC_SGI1R_SGI_ID_SHIFT		|
-	       MPIDR_TO_SGI_AFFINITY(cluster_id, 1)	|
-	       tlist << ICC_SGI1R_TARGET_LIST_SHIFT);
+	val = (MPIDR_AFFINITY_LEVEL(cluster_id, 3) << 48	|
+	       MPIDR_AFFINITY_LEVEL(cluster_id, 2) << 32	|
+	       irq << 24			    		|
+	       MPIDR_AFFINITY_LEVEL(cluster_id, 1) << 16	|
+	       tlist);
 
 	pr_debug("CPU%d: ICC_SGI1R_EL1 %llx\n", smp_processor_id(), val);
 	gic_write_sgi1r(val);

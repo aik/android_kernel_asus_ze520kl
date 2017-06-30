@@ -21,8 +21,14 @@
 
 #include <linux/mmc/card.h>
 #include <linux/mmc/host.h>
-#include <linux/sched/rt.h>
 #include "queue.h"
+//ASUS_BSP Deeo : mmc suspend stress test +++
+#ifdef CONFIG_MMC_SUSPENDTEST
+#include "../core/mmc_ops.h"
+#include "../core/core.h"
+#include <linux/delay.h>
+#endif
+//ASUS_BSP Deeo : mmc suspend stress test ---
 
 #define MMC_QUEUE_BOUNCESZ	65536
 
@@ -32,6 +38,11 @@
  * manage to keep the high write throughput.
  */
 #define DEFAULT_NUM_REQS_TO_START_PACK 17
+
+//ASUS_BSP Deeo : mmc suspend stress test +++
+extern int mmc_runtime_suspend_test(struct mmc_host *host);
+extern int mmc_runtime_resume_test(struct mmc_host *host);
+//ASUS_BSP Deeo : mmc suspend stress test ---
 
 /*
  * Prepare a MMC request. This just filters out odd stuff.
@@ -55,6 +66,53 @@ static int mmc_prep_request(struct request_queue *q, struct request *req)
 
 	return BLKPREP_OK;
 }
+
+//ASUS_BSP Deeo : mmc suspend stress test +++
+#ifdef CONFIG_MMC_SUSPENDTEST
+
+static int mmc_run_set_suspendtest(struct mmc_queue *mq)
+{
+	int err;
+
+	if (mq->card->host->suspend_datasz) {
+		if (mq->card->sectors_changed < mq->card->host->suspend_datasz*2)     // 1 sector= 512 byte
+			return 0;
+	} else {
+		mq->card->host->suspend_datasz = 100*1024;     //default value: 100MB
+		return 0;
+	}
+
+	//printk("[EMMC] mq->card->sectors_changed %d\n", mq->card->sectors_changed);
+	//printk("[EMMC] mq->card->host->suspend_datasz %d\n", mq->card->host->suspend_datasz);
+
+	//ASUS_BSP Deeo : check active_reqs to avoid bkops error while suspend +++
+	if (mmc_card_cmdq(mq->card->host->card)) {
+		if (mq->card->host->cmdq_ctx.active_reqs) {
+			//printk("[EMMC] mq->card->host->cmdq_ctx.active_reqs %lu\n", mq->card->host->cmdq_ctx.active_reqs);
+			printk("[EMMC] skip this time mmc_run_set_suspendtest!!! cnt:%d\n", mq->card->host->suspendcnt);
+			return 0;
+		}
+	}
+	//ASUS_BSP Deeo : check active_reqs to avoid bkops error while suspend ---
+
+	mq->card->sectors_changed = 0;
+	mq->card->host->suspendcnt++;
+
+	err = mmc_runtime_suspend_test(mq->card->host);
+	if (err < 0)
+		pr_err("%s: %s: suspend host failed: %d\n", mmc_hostname(mq->card->host), __func__, err);
+
+	msleep(1000);
+	err = mmc_runtime_resume_test(mq->card->host);
+	if (err < 0)
+		pr_err("%s: %s: resume host failed: %d\n", mmc_hostname(mq->card->host), __func__, err);
+
+	msleep(1000);
+
+	return 0;
+}
+#endif
+//ASUS_BSP Deeo : mmc suspend stress test ---
 
 static struct request *mmc_peek_request(struct mmc_queue *mq)
 {
@@ -136,6 +194,13 @@ static int mmc_cmdq_thread(void *d)
 		 */
 		if (ret)
 			BUG_ON(1);
+
+//ASUS_BSP Deeo : mmc suspend stress test +++
+#ifdef CONFIG_MMC_SUSPENDTEST
+		if (mq->card->host->suspendtest)
+			mmc_run_set_suspendtest(mq);
+#endif
+//ASUS_BSP Deeo : mmc suspend stress test ---
 	} /* loop */
 
 	return 0;
@@ -146,11 +211,6 @@ static int mmc_queue_thread(void *d)
 	struct mmc_queue *mq = d;
 	struct request_queue *q = mq->queue;
 	struct mmc_card *card = mq->card;
-	struct sched_param scheduler_params = {0};
-
-	scheduler_params.sched_priority = 1;
-
-	sched_setscheduler(current, SCHED_FIFO, &scheduler_params);
 
 	current->flags |= PF_MEMALLOC;
 	if (card->host->wakeup_on_idle)
@@ -197,6 +257,12 @@ static int mmc_queue_thread(void *d)
 				set_current_state(TASK_RUNNING);
 				break;
 			}
+//ASUS_BSP Deeo : mmc suspend stress test +++
+#ifdef CONFIG_MMC_SUSPENDTEST
+			if (mq->card->host->suspendtest)
+				mmc_run_set_suspendtest(mq);
+#endif
+//ASUS_BSP Deeo : mmc suspend stress test ---
 			up(&mq->thread_sem);
 			schedule();
 			down(&mq->thread_sem);
@@ -614,33 +680,9 @@ static void mmc_cmdq_error_work(struct work_struct *work)
 enum blk_eh_timer_return mmc_cmdq_rq_timed_out(struct request *req)
 {
 	struct mmc_queue *mq = req->q->queuedata;
-	static ktime_t last_timeout;
-	static int mmc_cmdq_req_timeout_count;
-	ktime_t now;
-	s64 delta;
-
 
 	pr_err("%s: request with tag: %d flags: 0x%llx timed out\n",
 	       mmc_hostname(mq->card->host), req->tag, req->cmd_flags);
-
-	if (!mmc_cmdq_req_timeout_count) {
-		last_timeout = ktime_get();
-		mmc_cmdq_req_timeout_count = 1;
-	} else {
-		now = ktime_get();
-		delta = ktime_to_ms(ktime_sub(now, last_timeout));
-
-		/* count only if two sequenet requests are
-		   timeout within 5 mins */
-		if (delta < 300000)
-			mmc_cmdq_req_timeout_count++;
-		else
-			mmc_cmdq_req_timeout_count = 0;
-		last_timeout = now;
-	}
-
-	if (mmc_cmdq_req_timeout_count >= 10)
-		BUG();
 
 	return mq->cmdq_req_timed_out(req);
 }
@@ -693,7 +735,7 @@ int mmc_cmdq_init(struct mmc_queue *mq, struct mmc_card *card)
 	init_completion(&mq->cmdq_pending_req_done);
 
 	blk_queue_rq_timed_out(mq->queue, mmc_cmdq_rq_timed_out);
-	blk_queue_rq_timeout(mq->queue, 30 * HZ);
+	blk_queue_rq_timeout(mq->queue, 120 * HZ);
 	card->cmdq_init = true;
 
 	goto out;

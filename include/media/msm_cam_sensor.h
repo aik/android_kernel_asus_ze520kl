@@ -2,7 +2,6 @@
 #define __LINUX_MSM_CAM_SENSOR_H
 
 #include <uapi/media/msm_cam_sensor.h>
-#include <uapi/media/msm_camsensor_sdk.h>
 
 #include <linux/compat.h>
 
@@ -34,7 +33,6 @@ struct msm_camera_sensor_slave_info32 {
 	char flash_name[32];
 	enum msm_sensor_camera_id_t camera_id;
 	uint16_t slave_addr;
-	uint16_t slave_addr2;
 	enum i2c_freq_mode_t i2c_freq_mode;
 	enum msm_camera_i2c_reg_addr_type addr_type;
 	struct msm_sensor_id_info_t sensor_id_info;
@@ -74,16 +72,6 @@ struct csid_cfg_data32 {
 	} cfg;
 };
 
-struct msm_ir_led_cfg_data_t32 {
-	enum msm_ir_led_cfg_type_t cfg_type;
-	int32_t pwm_duty_on_ns;
-	int32_t pwm_period_ns;
-};
-
-struct msm_ir_cut_cfg_data_t32 {
-	enum msm_ir_cut_cfg_type_t cfg_type;
-};
-
 struct eeprom_read_t32 {
 	compat_uptr_t dbuffer;
 	uint32_t num_bytes;
@@ -104,7 +92,7 @@ struct msm_eeprom_cfg_data32 {
 	enum eeprom_cfg_type_t cfgtype;
 	uint8_t is_supported;
 	union {
-		char eeprom_name[MAX_SENSOR_NAME];
+		char eeprom_name[MAX_EEPROM_NAME];
 		struct eeprom_get_t get_data;
 		struct eeprom_read_t32 read_data;
 		struct eeprom_write_t32 write_data;
@@ -132,11 +120,6 @@ struct msm_camera_i2c_array_write_config32 {
 	uint16_t slave_addr;
 };
 
-struct msm_mot_actuator_tuning_params_t32 {
-	int16_t infinity_dac;
-	int16_t macro_dac;
-};
-
 struct msm_actuator_tuning_params_t32 {
 	int16_t initial_code;
 	uint16_t pwd_step;
@@ -162,7 +145,6 @@ struct msm_actuator_params_t32 {
 struct msm_actuator_set_info_t32 {
 	struct msm_actuator_params_t32 actuator_params;
 	struct msm_actuator_tuning_params_t32 af_tuning_params;
-	struct msm_mot_actuator_tuning_params_t32 mot_af_tuning_params;
 };
 
 struct sensor_init_cfg_data32 {
@@ -245,9 +227,9 @@ struct msm_flash_init_info_t32 {
 
 struct msm_flash_cfg_data_t32 {
 	enum msm_flash_cfg_type_t cfg_type;
+	enum msm_flash_ctrl_state_t ctrl_state;//ASUS_BSP PJ "add ctrl state for mapping to truth table"
 	int32_t flash_current[MAX_LED_TRIGGERS];
 	int32_t flash_duration[MAX_LED_TRIGGERS];
-	enum flash_position position;
 	union {
 		compat_uptr_t flash_init_info;
 		compat_uptr_t settings;
@@ -277,12 +259,6 @@ struct msm_flash_cfg_data_t32 {
 
 #define VIDIOC_MSM_FLASH_CFG32 \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 13, struct msm_flash_cfg_data_t32)
-
-#define VIDIOC_MSM_IR_LED_CFG32 \
-	_IOWR('V', BASE_VIDIOC_PRIVATE + 14, struct msm_ir_led_cfg_data_t32)
-
-#define VIDIOC_MSM_IR_CUT_CFG32 \
-	_IOWR('V', BASE_VIDIOC_PRIVATE + 15, struct msm_ir_cut_cfg_data_t32)
 #endif
 
 #endif

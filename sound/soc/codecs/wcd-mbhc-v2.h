@@ -249,11 +249,9 @@ struct wcd_mbhc_config {
 	bool mono_stero_detection;
 	bool (*swap_gnd_mic)(struct snd_soc_codec *codec);
 	bool hs_ext_micbias;
-	bool is_selfistick;
 	bool gnd_det_en;
 	int key_code[WCD_MBHC_KEYCODE_NUM];
 	uint32_t linein_th;
-	uint32_t selfstick_th;
 	struct wcd_mbhc_moisture_cfg moist_cfg;
 	int mbhc_micbias;
 	int anc_micbias;
@@ -482,6 +480,8 @@ struct wcd_mbhc {
 	sizeof(struct wcd_mbhc_imped_detect_cfg) + \
 	(cfg_ptr->_n_rload * \
 	(sizeof(cfg_ptr->_rload[0]) + sizeof(cfg_ptr->_alpha[0]))))
+
+void wcd_mbhc_plug_detect_for_debug_mode(struct wcd_mbhc *mbhc, int debug_mode); /* ASUS_BSP Paul +++ */
 
 #ifdef CONFIG_SND_SOC_WCD_MBHC
 int wcd_mbhc_set_keycode(struct wcd_mbhc *mbhc);

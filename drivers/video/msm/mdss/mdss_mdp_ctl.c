@@ -702,7 +702,6 @@ int mdss_mdp_get_panel_params(struct mdss_mdp_pipe *pipe,
 		*v_total = mixer->height;
 		*xres = mixer->width;
 		*h_total = mixer->width;
-		*fps = DEFAULT_FRAME_RATE;
 	}
 
 	return 0;
@@ -714,8 +713,7 @@ int mdss_mdp_get_pipe_overlap_bw(struct mdss_mdp_pipe *pipe,
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
 	struct mdss_mdp_mixer *mixer = pipe->mixer_left;
 	struct mdss_rect src, dst;
-	u32 v_total = 0, h_total = 0, xres = 0, src_h = 0;
-	u32 fps = DEFAULT_FRAME_RATE;
+	u32 v_total, fps, h_total, xres, src_h;
 	*quota = 0;
 	*quota_nocr = 0;
 
@@ -4105,11 +4103,9 @@ int mdss_mdp_ctl_start(struct mdss_mdp_ctl *ctl, bool handoff)
 		return 0;
 	}
 
-	if (mdss_mdp_ctl_is_power_off(ctl)) {
-		ret = mdss_mdp_ctl_setup(ctl);
-		if (ret)
-			return ret;
-	}
+	ret = mdss_mdp_ctl_setup(ctl);
+	if (ret)
+		return ret;
 
 	sctl = mdss_mdp_get_split_ctl(ctl);
 

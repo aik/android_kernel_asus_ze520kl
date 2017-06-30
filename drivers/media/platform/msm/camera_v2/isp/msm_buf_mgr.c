@@ -20,7 +20,7 @@
 #include <linux/proc_fs.h>
 #include <linux/videodev2.h>
 #include <linux/vmalloc.h>
-#include <linux/irqchip/arm-gic.h>
+
 
 #include <media/v4l2-dev.h>
 #include <media/v4l2-ioctl.h>
@@ -30,7 +30,6 @@
 #include "msm.h"
 #include "msm_buf_mgr.h"
 #include "cam_smmu_api.h"
-#include "msm_isp_util.h"
 
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
@@ -63,13 +62,13 @@ static int msm_buf_check_head_sanity(struct msm_isp_bufq *bufq)
 	}
 
 	if (prev->next != &bufq->head) {
-		pr_err("%s: Error! head prev->next is %pK should be %pK\n",
+		pr_err("%s: Error! head prev->next is %p should be %p\n",
 			__func__, prev->next, &bufq->head);
 		return -EINVAL;
 	}
 
 	if (next->prev != &bufq->head) {
-		pr_err("%s: Error! head next->prev is %pK should be %pK\n",
+		pr_err("%s: Error! head next->prev is %p should be %p\n",
 			__func__, next->prev, &bufq->head);
 		return -EINVAL;
 	}
@@ -229,7 +228,7 @@ static void msm_isp_unprepare_v4l2_buf(
 	struct msm_isp_bufq *bufq = NULL;
 
 	if (!buf_mgr || !buf_info) {
-		pr_err("%s: NULL ptr %pK %pK\n", __func__,
+		pr_err("%s: NULL ptr %p %p\n", __func__,
 			buf_mgr, buf_info);
 		return;
 	}
@@ -256,7 +255,7 @@ static int msm_isp_map_buf(struct msm_isp_buf_mgr *buf_mgr,
 	int ret;
 
 	if (!buf_mgr || !mapped_info) {
-		pr_err_ratelimited("%s: %d] NULL ptr buf_mgr %pK mapped_info %pK\n",
+		pr_err_ratelimited("%s: %d] NULL ptr buf_mgr %p mapped_info %p\n",
 			__func__, __LINE__, buf_mgr, mapped_info);
 		return -EINVAL;
 	}
@@ -462,8 +461,7 @@ static int msm_isp_buf_unprepare(struct msm_isp_buf_mgr *buf_mgr,
 
 
 static int msm_isp_get_buf(struct msm_isp_buf_mgr *buf_mgr, uint32_t id,
-	uint32_t bufq_handle, uint32_t buf_index,
-	struct msm_isp_buffer **buf_info)
+	uint32_t bufq_handle, struct msm_isp_buffer **buf_info)
 {
 	int rc = -1;
 	unsigned long flags;
@@ -513,12 +511,8 @@ static int msm_isp_get_buf(struct msm_isp_buf_mgr *buf_mgr, uint32_t id,
 		}
 		break;
 	case MSM_ISP_BUFFER_SRC_HAL:
-		if (MSM_ISP_INVALID_BUF_INDEX == buf_index)
-			vb2_buf = buf_mgr->vb2_ops->get_buf(
-				bufq->session_id, bufq->stream_id);
-		else
-			vb2_buf = buf_mgr->vb2_ops->get_buf_by_idx(
-				bufq->session_id, bufq->stream_id,  buf_index);
+		vb2_buf = buf_mgr->vb2_ops->get_buf(
+			bufq->session_id, bufq->stream_id);
 		if (vb2_buf) {
 			if (vb2_buf->v4l2_buf.index < bufq->num_bufs) {
 				*buf_info = &bufq->bufs[vb2_buf
@@ -738,8 +732,6 @@ static int msm_isp_update_put_buf_cnt(struct msm_isp_buf_mgr *buf_mgr,
 	if (-ENOTEMPTY == rc) {
 		pr_err("%s: Error! Uncleared put_buf_mask for pingpong(%d) from vfe %d bufq 0x%x buf_idx %d\n",
 			__func__, pingpong_bit, id, bufq_handle, buf_index);
-		gic_show_pending_irq();
-		msm_isp_dump_ping_pong_mismatch();
 		rc = -EFAULT;
 	}
 	spin_unlock_irqrestore(&bufq->bufq_lock, flags);
@@ -1326,7 +1318,7 @@ static int msm_isp_buf_mgr_debug(struct msm_isp_buf_mgr *buf_mgr,
 	uint32_t debug_start_addr = 0;
 	uint32_t debug_end_addr = 0;
 	uint32_t debug_frame_id = 0;
-	enum msm_isp_buffer_state debug_state = MSM_ISP_BUFFER_STATE_UNUSED;
+	enum msm_isp_buffer_state debug_state;
 	unsigned long flags;
 	struct msm_isp_bufq *bufq = NULL;
 

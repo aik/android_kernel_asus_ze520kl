@@ -9,6 +9,7 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
+#define DEBUG 1
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -49,11 +50,22 @@
 #define FW_READ_ATTEMPTS 15
 #define FW_READ_TIMEOUT 4000000
 #define FAKE_REM_RETRY_ATTEMPTS 3
-#define MAX_IMPED 60000
+//#define MAX_IMPED 60000
+#define MAX_IMPED 20000
 
 #define WCD_MBHC_BTN_PRESS_COMPL_TIMEOUT_MS  50
 #define ANC_DETECT_RETRY_CNT 7
 #define WCD_MBHC_SPL_HS_CNT  1
+
+/* ASUS_BSP Paul +++ */
+int g_jack_det_invert = 0;
+extern int g_DebugMode;
+/* ASUS_BSP Paul --- */
+
+/* ASUS_BSP Eric +++*/
+uint32_t g_ZL = 0;
+uint32_t g_ZR = 0;
+/* ASUS_BSP Eric ---*/
 
 static int det_extn_cable_en;
 module_param(det_extn_cable_en, int,
@@ -121,7 +133,8 @@ static void wcd_program_hs_vref(struct wcd_mbhc *mbhc)
 	reg_val = ((plug_type_cfg->v_hs_max - HS_VREF_MIN_VAL) / 100);
 
 	dev_dbg(codec->dev, "%s: reg_val  = %x\n", __func__, reg_val);
-	WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_HS_VREF, reg_val);
+	//WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_HS_VREF, reg_val);
+	WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_HS_VREF, 0x3); /* ASUS_BSP Eric +++ */
 }
 
 static void wcd_program_btn_threshold(const struct wcd_mbhc *mbhc, bool micbias)
@@ -553,7 +566,6 @@ static void wcd_mbhc_hs_elec_irq(struct wcd_mbhc *mbhc, int irq_type,
 static void wcd_mbhc_report_plug(struct wcd_mbhc *mbhc, int insertion,
 				enum snd_jack_types jack_type)
 {
-	u16 elect_result;
 	WCD_MBHC_RSC_ASSERT_LOCKED(mbhc);
 
 	pr_debug("%s: enter insertion %d hph_status %x\n",
@@ -594,7 +606,7 @@ static void wcd_mbhc_report_plug(struct wcd_mbhc *mbhc, int insertion,
 
 		mbhc->hph_type = WCD_MBHC_HPH_NONE;
 		mbhc->zl = mbhc->zr = 0;
-		pr_info("%s: Reporting removal %d(%x)\n", __func__,
+		pr_debug("%s: Reporting removal %d(%x)\n", __func__,
 			 jack_type, mbhc->hph_status);
 		wcd_mbhc_jack_report(mbhc, &mbhc->headset_jack,
 				mbhc->hph_status, WCD_MBHC_JACK_MASK);
@@ -676,14 +688,16 @@ static void wcd_mbhc_report_plug(struct wcd_mbhc *mbhc, int insertion,
 		} else if (jack_type == SND_JACK_ANC_HEADPHONE)
 			mbhc->current_plug = MBHC_PLUG_TYPE_ANC_HEADPHONE;
 
-		WCD_MBHC_REG_READ(WCD_MBHC_ELECT_RESULT, elect_result);
-		pr_debug("%s: elect_result: %d\n", __func__, elect_result);
-
 		if (mbhc->impedance_detect &&
 			mbhc->mbhc_cb->compute_impedance &&
 			(mbhc->mbhc_cfg->linein_th != 0)) {
 				mbhc->mbhc_cb->compute_impedance(mbhc,
 						&mbhc->zl, &mbhc->zr);
+			/* ASUS_BSP Eric +++*/
+			g_ZL = mbhc->zl;
+			g_ZR = mbhc->zr;
+			//printk("wcd_mbhc_v2 : print hs_imp_val : LL = %d , RR = %d\n",g_ZL, g_ZR);
+			/* ASUS_BSP Eric ---*/
 			if ((mbhc->zl > mbhc->mbhc_cfg->linein_th &&
 				mbhc->zl < MAX_IMPED) &&
 				(mbhc->zr > mbhc->mbhc_cfg->linein_th &&
@@ -702,29 +716,13 @@ static void wcd_mbhc_report_plug(struct wcd_mbhc *mbhc, int insertion,
 				}
 				pr_debug("%s: Marking jack type as SND_JACK_LINEOUT\n",
 				__func__);
-			} else if (((mbhc->zl > mbhc->mbhc_cfg->selfstick_th &&
-				mbhc->zl < MAX_IMPED) &&
-				(mbhc->zr > mbhc->mbhc_cfg->selfstick_th &&
-				 mbhc->zr < MAX_IMPED) &&
-				(jack_type == SND_JACK_UNSUPPORTED))) {
-				jack_type = SND_JACK_HEADSET;
-				mbhc->current_plug = MBHC_PLUG_TYPE_HEADSET;
-				mbhc->mbhc_cfg->is_selfistick = true;
-				mbhc->jiffies_atreport = jiffies;
-				}
+			}
 		}
 
 		mbhc->hph_status |= jack_type;
 
-
-		if ((jack_type == SND_JACK_LINEOUT) && elect_result) {
-			mbhc->hph_status = 0;
-			pr_debug("%s: DTV dongle detected\n", __func__);
-		}
-
-		pr_info("%s: Reporting insertion %d(%x),zl %d ohm,zr %d ohm\n",
-			__func__, jack_type, mbhc->hph_status,
-			mbhc->zl, mbhc->zr);
+		pr_debug("%s: Reporting insertion %d(%x)\n", __func__,
+			 jack_type, mbhc->hph_status);
 		wcd_mbhc_jack_report(mbhc, &mbhc->headset_jack,
 				    (mbhc->hph_status | SND_JACK_MECHANICAL),
 				    WCD_MBHC_JACK_MASK);
@@ -893,59 +891,7 @@ exit:
 	pr_debug("%s: leave\n", __func__);
 }
 
-/* To determine if cross connection occured */
-static int wcd_check_cross_conn(struct wcd_mbhc *mbhc)
-{
-	u16 swap_res;
-	enum wcd_mbhc_plug_type plug_type = MBHC_PLUG_TYPE_NONE;
-	s16 reg1;
-	bool hphl_sch_res, hphr_sch_res;
 
-	if (wcd_swch_level_remove(mbhc)) {
-		pr_debug("%s: Switch level is low\n", __func__);
-		return -EINVAL;
-	}
-
-	/* If PA is enabled, dont check for cross-connection */
-	if (mbhc->mbhc_cb->hph_pa_on_status)
-		if (mbhc->mbhc_cb->hph_pa_on_status(mbhc->codec))
-			return false;
-
-	WCD_MBHC_REG_READ(WCD_MBHC_ELECT_SCHMT_ISRC, reg1);
-	/*
-	 * Check if there is any cross connection,
-	 * Micbias and schmitt trigger (HPHL-HPHR)
-	 * needs to be enabled. For some codecs like wcd9335,
-	 * pull-up will already be enabled when this function
-	 * is called for cross-connection identification. No
-	 * need to enable micbias in that case.
-	 */
-	wcd_enable_curr_micbias(mbhc, WCD_MBHC_EN_MB);
-	WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_ELECT_SCHMT_ISRC, 2);
-
-	WCD_MBHC_REG_READ(WCD_MBHC_ELECT_RESULT, swap_res);
-	pr_debug("%s: swap_res%x\n", __func__, swap_res);
-
-	/*
-	 * Read reg hphl and hphr schmitt result with cross connection
-	 * bit. These bits will both be "0" in case of cross connection
-	 * otherwise, they stay at 1
-	 */
-	WCD_MBHC_REG_READ(WCD_MBHC_HPHL_SCHMT_RESULT, hphl_sch_res);
-	WCD_MBHC_REG_READ(WCD_MBHC_HPHR_SCHMT_RESULT, hphr_sch_res);
-	if (!(hphl_sch_res || hphr_sch_res)) {
-		plug_type = MBHC_PLUG_TYPE_GND_MIC_SWAP;
-		pr_debug("%s: Cross connection identified\n", __func__);
-	} else {
-		pr_debug("%s: No Cross connection found\n", __func__);
-	}
-
-	/* Disable schmitt trigger and restore micbias */
-	WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_ELECT_SCHMT_ISRC, reg1);
-	pr_debug("%s: leave, plug type: %d\n", __func__,  plug_type);
-
-	return (plug_type == MBHC_PLUG_TYPE_GND_MIC_SWAP) ? true : false;
-}
 
 static bool wcd_is_special_headset(struct wcd_mbhc *mbhc)
 {
@@ -1095,8 +1041,6 @@ static void wcd_enable_mbhc_supply(struct wcd_mbhc *mbhc,
 							WCD_MBHC_EN_CS);
 		} else if (plug_type == MBHC_PLUG_TYPE_HEADPHONE) {
 			wcd_enable_curr_micbias(mbhc, WCD_MBHC_EN_CS);
-		} else if (mbhc->mbhc_cfg->is_selfistick) {
-			wcd_enable_curr_micbias(mbhc, WCD_MBHC_EN_MB);
 		} else {
 			wcd_enable_curr_micbias(mbhc, WCD_MBHC_EN_NONE);
 		}
@@ -1212,7 +1156,8 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 	}
 
 	do {
-		cross_conn = wcd_check_cross_conn(mbhc);
+		//cross_conn = wcd_check_cross_conn(mbhc);
+		cross_conn = 0;
 		try++;
 	} while (try < GND_MIC_SWAP_THRESHOLD);
 	/*
@@ -1245,10 +1190,10 @@ correct_plug_type:
 					mbhc->hs_detect_work_stop);
 			wcd_enable_curr_micbias(mbhc,
 						WCD_MBHC_EN_NONE);
-			if (mbhc->micbias_enable) {
-				if (mbhc->mbhc_cb->mbhc_micb_ctrl_thr_mic)
-					mbhc->mbhc_cb->mbhc_micb_ctrl_thr_mic(
-						mbhc->codec, MIC_BIAS_2, false);
+			if (mbhc->mbhc_cb->mbhc_micb_ctrl_thr_mic &&
+				mbhc->micbias_enable) {
+				mbhc->mbhc_cb->mbhc_micb_ctrl_thr_mic(
+					mbhc->codec, MIC_BIAS_2, false);
 				if (mbhc->mbhc_cb->set_micbias_value)
 					mbhc->mbhc_cb->set_micbias_value(
 							mbhc->codec);
@@ -1271,10 +1216,10 @@ correct_plug_type:
 					mbhc->hs_detect_work_stop);
 			wcd_enable_curr_micbias(mbhc,
 						WCD_MBHC_EN_NONE);
-			if (mbhc->micbias_enable) {
-				if (mbhc->mbhc_cb->mbhc_micb_ctrl_thr_mic)
-					mbhc->mbhc_cb->mbhc_micb_ctrl_thr_mic(
-						mbhc->codec, MIC_BIAS_2, false);
+			if (mbhc->mbhc_cb->mbhc_micb_ctrl_thr_mic &&
+				mbhc->micbias_enable) {
+				mbhc->mbhc_cb->mbhc_micb_ctrl_thr_mic(
+					mbhc->codec, MIC_BIAS_2, false);
 				if (mbhc->mbhc_cb->set_micbias_value)
 					mbhc->mbhc_cb->set_micbias_value(
 							mbhc->codec);
@@ -1306,7 +1251,8 @@ correct_plug_type:
 
 		if ((!hs_comp_res) && (!is_pa_on)) {
 			/* Check for cross connection*/
-			ret = wcd_check_cross_conn(mbhc);
+			//ret = wcd_check_cross_conn(mbhc);
+			ret = 0;
 			if (ret < 0) {
 				continue;
 			} else if (ret > 0) {
@@ -1419,11 +1365,13 @@ report:
 		pr_debug("%s: Switch level is low\n", __func__);
 		goto exit;
 	}
+	
 	if (plug_type == MBHC_PLUG_TYPE_GND_MIC_SWAP && mbhc->btn_press_intr) {
 		pr_debug("%s: insertion of headphone with swap\n", __func__);
 		wcd_cancel_btn_work(mbhc);
 		plug_type = MBHC_PLUG_TYPE_HEADPHONE;
 	}
+	
 	pr_debug("%s: Valid plug found, plug type %d wrk_cmpt %d btn_intr %d\n",
 			__func__, plug_type, wrk_complete,
 			mbhc->btn_press_intr);
@@ -1445,6 +1393,15 @@ exit:
 								MIC_BIAS_1);
 		micbias2 = mbhc->mbhc_cb->micbias_enable_status(mbhc,
 								MIC_BIAS_2);
+	}
+
+	if (mbhc->mbhc_cfg->detect_extn_cable &&
+	    ((plug_type == MBHC_PLUG_TYPE_HEADPHONE) ||
+	     (plug_type == MBHC_PLUG_TYPE_HEADSET)) &&
+	    !mbhc->hs_detect_work_stop) {
+		WCD_MBHC_RSC_LOCK(mbhc);
+		wcd_mbhc_hs_elec_irq(mbhc, WCD_MBHC_ELEC_HS_REM, true);
+		WCD_MBHC_RSC_UNLOCK(mbhc);
 	}
 	if (mbhc->mbhc_cb->set_cap_mode)
 		mbhc->mbhc_cb->set_cap_mode(codec, micbias1, micbias2);
@@ -1513,6 +1470,11 @@ static void wcd_mbhc_swch_irq_handler(struct wcd_mbhc *mbhc)
 			mbhc->current_plug, detection_type);
 	wcd_cancel_hs_detect_plug(mbhc, &mbhc->correct_plug_swch);
 
+	/* ASUS_BSP Paul +++ */
+	if (g_DebugMode)
+		goto exit;
+	/* ASUS_BSP Paul --- */
+
 	if (mbhc->mbhc_cb->micbias_enable_status)
 		micbias1 = mbhc->mbhc_cb->micbias_enable_status(mbhc,
 						MIC_BIAS_1);
@@ -1543,7 +1505,6 @@ static void wcd_mbhc_swch_irq_handler(struct wcd_mbhc *mbhc)
 		if (mbhc->mbhc_cb->enable_mb_source)
 			mbhc->mbhc_cb->enable_mb_source(codec, true);
 		mbhc->btn_press_intr = false;
-		mbhc->is_btn_press = false;
 		wcd_mbhc_detect_plug_type(mbhc);
 	} else if ((mbhc->current_plug != MBHC_PLUG_TYPE_NONE)
 			&& !detection_type) {
@@ -1561,7 +1522,6 @@ static void wcd_mbhc_swch_irq_handler(struct wcd_mbhc *mbhc)
 			mbhc->mbhc_cb->set_cap_mode(codec, micbias1, false);
 
 		mbhc->btn_press_intr = false;
-		mbhc->is_btn_press = false;
 		if (mbhc->current_plug == MBHC_PLUG_TYPE_HEADPHONE) {
 			wcd_mbhc_hs_elec_irq(mbhc, WCD_MBHC_ELEC_HS_REM,
 					     false);
@@ -1577,8 +1537,7 @@ static void wcd_mbhc_swch_irq_handler(struct wcd_mbhc *mbhc)
 			/* make sure to turn off Rbias */
 			if (mbhc->mbhc_cb->micb_internal)
 				mbhc->mbhc_cb->micb_internal(codec, 1, false);
-			if (mbhc->mbhc_cfg->is_selfistick)
-				mbhc->mbhc_cfg->is_selfistick = false;
+
 			/* Pulldown micbias */
 			WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_PULLDOWN_CTRL, 1);
 			wcd_mbhc_hs_elec_irq(mbhc, WCD_MBHC_ELEC_HS_REM,
@@ -1620,6 +1579,7 @@ static void wcd_mbhc_swch_irq_handler(struct wcd_mbhc *mbhc)
 		WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_BTN_ISRC_CTL, 0);
 	}
 
+exit: /* ASUS_BSP Paul +++ */
 	mbhc->in_swch_irq_handler = false;
 	WCD_MBHC_RSC_UNLOCK(mbhc);
 	pr_debug("%s: leave\n", __func__);
@@ -1630,7 +1590,7 @@ static irqreturn_t wcd_mbhc_mech_plug_detect_irq(int irq, void *data)
 	int r = IRQ_HANDLED;
 	struct wcd_mbhc *mbhc = data;
 
-	pr_info("%s: enter\n", __func__);
+	pr_debug("%s: enter\n", __func__);
 	if (unlikely((mbhc->mbhc_cb->lock_sleep(mbhc, true)) == false)) {
 		pr_warn("%s: failed to hold suspend\n", __func__);
 		r = IRQ_NONE;
@@ -1643,13 +1603,57 @@ static irqreturn_t wcd_mbhc_mech_plug_detect_irq(int irq, void *data)
 	return r;
 }
 
+/* ASUS_BSP Paul +++ */
+void wcd_mbhc_plug_detect_for_debug_mode(struct wcd_mbhc *mbhc, int debug_mode)
+{
+	if (debug_mode) {
+		if (mbhc->current_plug != MBHC_PLUG_TYPE_NONE) {
+			printk("%s: current_plug != MBHC_PLUG_TYPE_NONE, force removal\n", __func__);
+			mbhc->mbhc_cb->lock_sleep(mbhc, true);
+			wcd_mbhc_swch_irq_handler(mbhc);
+			mbhc->mbhc_cb->lock_sleep(mbhc, false);
+			g_jack_det_invert = 1;
+		}
+		mbhc->mbhc_cb->irq_control(mbhc->codec, mbhc->intr_ids->mbhc_btn_press_intr, false);
+		mbhc->mbhc_cb->irq_control(mbhc->codec, mbhc->intr_ids->mbhc_btn_release_intr, false);
+		mbhc->mbhc_cb->irq_control(mbhc->codec, mbhc->intr_ids->hph_left_ocp, false);
+		mbhc->mbhc_cb->irq_control(mbhc->codec, mbhc->intr_ids->hph_right_ocp, false);
+	} else {
+		bool detection_type;
+		mbhc->mbhc_cb->irq_control(mbhc->codec, mbhc->intr_ids->mbhc_btn_press_intr, true);
+		mbhc->mbhc_cb->irq_control(mbhc->codec, mbhc->intr_ids->mbhc_btn_release_intr, true);
+		mbhc->mbhc_cb->irq_control(mbhc->codec, mbhc->intr_ids->hph_left_ocp, true);
+		mbhc->mbhc_cb->irq_control(mbhc->codec, mbhc->intr_ids->hph_right_ocp, true);
+		WCD_MBHC_REG_READ(WCD_MBHC_MECH_DETECTION_TYPE, detection_type);
+		if (!g_jack_det_invert && !detection_type) {
+			printk("%s: g_jack_det_invert == 0, detect plug type\n", __func__);
+			WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_MECH_DETECTION_TYPE,
+					!detection_type);
+			mbhc->mbhc_cb->lock_sleep(mbhc, true);
+			wcd_mbhc_swch_irq_handler(mbhc);
+			mbhc->mbhc_cb->lock_sleep(mbhc, false);
+		} else if (g_jack_det_invert && !detection_type) {
+			printk("%s: current_plug == MBHC_PLUG_TYPE_NONE\n", __func__);
+			WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_MECH_DETECTION_TYPE,
+					!detection_type);
+		} else if (g_jack_det_invert && detection_type) {
+			printk("%s: g_jack_det_invert == 1, detect plug type\n", __func__);
+			mbhc->mbhc_cb->lock_sleep(mbhc, true);
+			wcd_mbhc_swch_irq_handler(mbhc);
+			mbhc->mbhc_cb->lock_sleep(mbhc, false);
+		}
+		g_jack_det_invert = 0;
+	}
+}
+EXPORT_SYMBOL(wcd_mbhc_plug_detect_for_debug_mode);
+/* ASUS_BSP Paul --- */
+
 static int wcd_mbhc_get_button_mask(struct wcd_mbhc *mbhc)
 {
 	int mask = 0;
 	int btn;
-
 	btn = mbhc->mbhc_cb->map_btn_code_to_num(mbhc->codec);
-
+	pr_debug("%s: button mask = %d\n", __func__, btn);
 	switch (btn) {
 	case 0:
 		mask = SND_JACK_BTN_0;
@@ -1757,7 +1761,6 @@ determine_plug:
 	mic_trigerred = 0;
 	mbhc->is_extn_cable = true;
 	mbhc->btn_press_intr = false;
-	mbhc->is_btn_press = false;
 	wcd_mbhc_detect_plug_type(mbhc);
 	WCD_MBHC_RSC_UNLOCK(mbhc);
 	pr_debug("%s: leave\n", __func__);
@@ -1797,6 +1800,10 @@ static irqreturn_t wcd_mbhc_hs_rem_irq(int irq, void *data)
 		}
 	} while (!time_after(jiffies, timeout));
 
+	if (wcd_swch_level_remove(mbhc)) {
+		pr_debug("%s: Switch level is low ", __func__);
+		goto exit;
+	}
 	pr_debug("%s: headset %s actually removed\n", __func__,
 		removed ? "" : "not ");
 
@@ -1831,6 +1838,7 @@ static irqreturn_t wcd_mbhc_hs_rem_irq(int irq, void *data)
 			}
 		}
 	}
+exit:
 	WCD_MBHC_RSC_UNLOCK(mbhc);
 	pr_debug("%s: leave\n", __func__);
 	return IRQ_HANDLED;
@@ -1929,13 +1937,15 @@ static irqreturn_t wcd_mbhc_btn_press_handler(int irq, void *data)
 	pr_debug("%s: enter\n", __func__);
 	complete(&mbhc->btn_press_compl);
 	WCD_MBHC_RSC_LOCK(mbhc);
+	/* send event to sw intr handler*/
+	mbhc->is_btn_press = true;
 	wcd_cancel_btn_work(mbhc);
 	if (wcd_swch_level_remove(mbhc)) {
 		pr_debug("%s: Switch level is low ", __func__);
 		goto done;
 	}
+	mbhc->btn_press_intr = true;
 
-	mbhc->is_btn_press = true;
 	msec_val = jiffies_to_msecs(jiffies - mbhc->jiffies_atreport);
 	pr_debug("%s: msec_val = %ld\n", __func__, msec_val);
 	if (msec_val < MBHC_BUTTON_PRESS_THRESHOLD_MIN) {
@@ -1949,15 +1959,12 @@ static irqreturn_t wcd_mbhc_btn_press_handler(int irq, void *data)
 			 __func__);
 		goto done;
 	}
-	mask = wcd_mbhc_get_button_mask(mbhc);
-	if (mask == SND_JACK_BTN_0)
-		mbhc->btn_press_intr = true;
-
 	if (mbhc->current_plug != MBHC_PLUG_TYPE_HEADSET) {
 		pr_debug("%s: Plug isn't headset, ignore button press\n",
 				__func__);
 		goto done;
 	}
+	mask = wcd_mbhc_get_button_mask(mbhc);
 	mbhc->buttons_pressed |= mask;
 	mbhc->mbhc_cb->lock_sleep(mbhc, true);
 	if (schedule_delayed_work(&mbhc->mbhc_btn_dwork,
@@ -1983,8 +1990,8 @@ static irqreturn_t wcd_mbhc_release_handler(int irq, void *data)
 		goto exit;
 	}
 
-	if (mbhc->is_btn_press) {
-		mbhc->is_btn_press = false;
+	if (mbhc->btn_press_intr) {
+		mbhc->btn_press_intr = false;
 	} else {
 		pr_debug("%s: This release is for fake btn press\n", __func__);
 		goto exit;
@@ -2003,7 +2010,7 @@ static irqreturn_t wcd_mbhc_release_handler(int irq, void *data)
 	if (mbhc->buttons_pressed & WCD_MBHC_JACK_BUTTON_MASK) {
 		ret = wcd_cancel_btn_work(mbhc);
 		if (ret == 0) {
-			pr_info("%s: Reporting long button release event\n",
+			pr_debug("%s: Reporting long button release event\n",
 				 __func__);
 			wcd_mbhc_jack_report(mbhc, &mbhc->button_jack,
 					0, mbhc->buttons_pressed);
@@ -2012,13 +2019,13 @@ static irqreturn_t wcd_mbhc_release_handler(int irq, void *data)
 				pr_debug("%s: Switch irq kicked in, ignore\n",
 					__func__);
 			} else {
-				pr_info("%s: Reporting btn press\n",
+				pr_debug("%s: Reporting btn press\n",
 					 __func__);
 				wcd_mbhc_jack_report(mbhc,
 						     &mbhc->button_jack,
 						     mbhc->buttons_pressed,
 						     mbhc->buttons_pressed);
-				pr_info("%s: Reporting btn release\n",
+				pr_debug("%s: Reporting btn release\n",
 					 __func__);
 				wcd_mbhc_jack_report(mbhc,
 						&mbhc->button_jack,

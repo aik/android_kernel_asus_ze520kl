@@ -434,9 +434,9 @@ static int sd_select_driver_type(struct mmc_card *card, u8 *status)
 	 * return what is possible given the options
 	 */
 	mmc_host_clk_hold(card->host);
-	drive_strength = card->host->ops->select_drive_strength(card->host,
-								host_drv_type,
-								 card_drv_type);
+	drive_strength = card->host->ops->select_drive_strength(
+		card->sw_caps.uhs_max_dtr,
+		host_drv_type, card_drv_type);
 	mmc_host_clk_release(card->host);
 
 	err = mmc_sd_switch(card, 1, 2, drive_strength, status);
@@ -465,6 +465,9 @@ static void sd_update_bus_speed_mode(struct mmc_card *card)
 		return;
 	}
 
+	printk("[SD] card->host->caps 0x%x\n", card->host->caps);
+	printk("[SD] card->sw_caps.sd3_bus_mode 0x%x\n", card->sw_caps.sd3_bus_mode);
+
 	if ((card->host->caps & MMC_CAP_UHS_SDR104) &&
 	    (card->sw_caps.sd3_bus_mode & SD_MODE_UHS_SDR104) &&
 	    (card->host->f_max > UHS_SDR104_MIN_DTR)) {
@@ -489,6 +492,7 @@ static void sd_update_bus_speed_mode(struct mmc_card *card)
 		    SD_MODE_UHS_SDR12)) {
 			card->sd_bus_speed = UHS_SDR12_BUS_SPEED;
 	}
+	printk("[SD] card->sd_bus_speed %d\n", card->sd_bus_speed);
 }
 
 static int sd_set_bus_speed_mode(struct mmc_card *card, u8 *status)
@@ -682,6 +686,7 @@ static int mmc_sd_init_uhs_card(struct mmc_card *card)
 	int err;
 	u8 *status;
 
+	printk("[SD] mmc_sd_init_uhs_card\n");
 	if (!card->scr.sda_spec3)
 		return 0;
 
@@ -1005,6 +1010,7 @@ static int mmc_sd_init_card(struct mmc_host *host, u32 ocr,
 	BUG_ON(!host);
 	WARN_ON(!host->claimed);
 
+	printk("[SD] mmc_sd_init_card\n");
 	err = mmc_sd_get_cid(host, ocr, cid, &rocr);
 	if (err)
 		return err;
@@ -1074,6 +1080,7 @@ static int mmc_sd_init_card(struct mmc_host *host, u32 ocr,
 		/*
 		 * Attempt to change to high-speed (if supported)
 		 */
+		printk("[SD] mmc_card_set_highspeed \n");
 		err = mmc_sd_switch_hs(card);
 		if (err > 0)
 			mmc_set_timing(card->host, MMC_TIMING_SD_HS);
@@ -1294,7 +1301,7 @@ static int mmc_sd_resume(struct mmc_host *host)
 {
 	int err = 0;
 
-	if (!(host->caps & (MMC_CAP_AGGRESSIVE_PM | MMC_CAP_RUNTIME_RESUME))) {
+	if (!(host->caps & MMC_CAP_RUNTIME_RESUME)) {
 		err = _mmc_sd_resume(host);
 		pm_runtime_set_active(&host->card->dev);
 		pm_runtime_mark_last_busy(&host->card->dev);
@@ -1424,12 +1431,7 @@ int mmc_attach_sd(struct mmc_host *host)
 	 */
 #ifdef CONFIG_MMC_PARANOID_SD_INIT
 	retries = 5;
-
-	/*
-	 * Some bad cards may take a long time to init, give preference to
-	 * suspend in those cases.
-	 */
-	while (retries && !host->rescan_disable) {
+	while (retries) {
 		err = mmc_sd_init_card(host, rocr, NULL);
 		if (err) {
 			retries--;
@@ -1447,9 +1449,6 @@ int mmc_attach_sd(struct mmc_host *host)
 		       mmc_hostname(host), err);
 		goto err;
 	}
-
-	if (host->rescan_disable)
-		goto err;
 #else
 	err = mmc_sd_init_card(host, rocr, NULL);
 	if (err)

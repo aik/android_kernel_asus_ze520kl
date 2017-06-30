@@ -363,6 +363,12 @@ static int fw_get_filesystem_firmware(struct device *device,
 	int i;
 	int rc = -ENOENT;
 	char *path = __getname();
+	/* ASUS BSP : For Change ADSP FW loading path to system/etc/firmware +++*/
+	char fw_name[4];
+	/* ASUS BSP ---*/
+        /* ASUS BSP : For Change Venus FW loading path to system/etc/firmware +++*/
+        char v_name[5];
+        /* ASUS BSP ---*/
 	if (!path)
 		return false;
 
@@ -375,6 +381,20 @@ static int fw_get_filesystem_firmware(struct device *device,
 
 		snprintf(path, PATH_MAX, "%s/%s", fw_path[i], buf->fw_id);
 
+		/* ASUS BSP : For Change ADSP FW loading path to system/etc/firmware */
+		snprintf(fw_name, 5, "%s", buf->fw_id);
+		if (!strcmp(fw_name, "adsp")  && i == 1 ) {
+			snprintf(path, PATH_MAX, "%s/%s", "/system/etc/firmware", buf->fw_id);
+			dev_err(device, "[Sensor] Try to load firmware : %s \n", path);
+		}
+		/* ASUS BSP ---*/
+                /* ASUS BSP : For Change Venus FW loading path to system/etc/firmware */
+                snprintf(v_name, 6, "%s", buf->fw_id);
+                if (!strcmp(v_name, "venus")  && i == 1 ) {
+                        snprintf(path, PATH_MAX, "%s/%s", "/system/etc/firmware", buf->fw_id);
+                        dev_err(device, "[Venus] Try to load firmware : %s \n", path);
+                }
+                /* ASUS BSP ---*/
 		file = filp_open(path, O_RDONLY, 0);
 		if (IS_ERR(file))
 			continue;
@@ -1271,17 +1291,15 @@ static int assign_firmware_buf(struct firmware *fw, struct device *device,
 /* called from request_firmware() and request_firmware_work_func() */
 static int _request_firmware(struct fw_desc *desc)
 {
-	struct firmware *fw = NULL;
+	struct firmware *fw;
 	long timeout;
 	int ret;
 
 	if (!desc->firmware_p)
 		return -EINVAL;
 
-	if (!desc->name || desc->name[0] == '\0') {
-		ret = -EINVAL;
-		goto out;
-	}
+	if (!desc->name || desc->name[0] == '\0')
+		return -EINVAL;
 
 	ret = _request_firmware_prepare(&fw, desc);
 	if (ret <= 0) /* error or already assigned */

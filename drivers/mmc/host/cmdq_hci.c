@@ -506,7 +506,6 @@ static void cmdq_prep_task_desc(struct mmc_request *mrq,
 {
 	struct mmc_cmdq_req *cmdq_req = mrq->cmdq_req;
 	u32 req_flags = cmdq_req->cmdq_req_flags;
-	unsigned long flags;
 
 	pr_debug("%s: %s: data-tag: 0x%08x - dir: %d - prio: %d - cnt: 0x%08x -	addr: 0x%llx\n",
 		 mmc_hostname(mrq->host), __func__,
@@ -514,7 +513,6 @@ static void cmdq_prep_task_desc(struct mmc_request *mrq,
 		 !!(req_flags & PRIO), cmdq_req->data.blocks,
 		 (u64)mrq->cmdq_req->blk_addr);
 
-	local_irq_save(flags);
 	*data = VALID(1) |
 		END(1) |
 		INT(intr) |
@@ -528,9 +526,6 @@ static void cmdq_prep_task_desc(struct mmc_request *mrq,
 		REL_WRITE(!!(req_flags & REL_WR)) |
 		BLK_COUNT(mrq->cmdq_req->data.blocks) |
 		BLK_ADDR((u64)mrq->cmdq_req->blk_addr);
-
-	mb();
-	local_irq_restore(flags);
 }
 
 static int cmdq_dma_map(struct mmc_host *host, struct mmc_request *mrq)
@@ -557,9 +552,6 @@ static void cmdq_set_tran_desc(u8 *desc, dma_addr_t addr, int len,
 				bool end, bool is_dma64)
 {
 	__le32 *attr = (__le32 __force *)desc;
-	unsigned long flags;
-
-	local_irq_save(flags);
 
 	*attr = (VALID(1) |
 		 END(end ? 1 : 0) |
@@ -576,9 +568,6 @@ static void cmdq_set_tran_desc(u8 *desc, dma_addr_t addr, int len,
 
 		dataddr[0] = cpu_to_le32(addr);
 	}
-
-	mb();
-	local_irq_restore(flags);
 }
 
 static int cmdq_prep_tran_desc(struct mmc_request *mrq,
@@ -647,7 +636,6 @@ static void cmdq_prep_dcmd_desc(struct mmc_host *mmc,
 	__le64 *dataddr;
 	struct cmdq_host *cq_host = mmc_cmdq_private(mmc);
 	u8 timing;
-	unsigned long flags;
 
 	if (!(mrq->cmd->flags & MMC_RSP_PRESENT)) {
 		resp_type = 0x0;
@@ -662,7 +650,6 @@ static void cmdq_prep_dcmd_desc(struct mmc_host *mmc,
 		}
 	}
 
-	local_irq_save(flags);
 	task_desc = (__le64 __force *)get_desc(cq_host, cq_host->dcmd_slot);
 	memset(task_desc, 0, cq_host->task_desc_len);
 	data |= (VALID(1) |
@@ -674,14 +661,11 @@ static void cmdq_prep_dcmd_desc(struct mmc_host *mmc,
 		 CMD_TIMING(timing) | RESP_TYPE(resp_type));
 	*task_desc |= data;
 	desc = (u8 *)task_desc;
-	dataddr = (__le64 __force *)(desc + 4);
-	dataddr[0] = cpu_to_le64((u64)mrq->cmd->arg);
-	mb();
-	local_irq_restore(flags);
-
-	cmdq_log_task_desc_history(cq_host, *task_desc, true);
 	pr_debug("cmdq: dcmd: cmd: %d timing: %d resp: %d\n",
 		mrq->cmd->opcode, timing, resp_type);
+	dataddr = (__le64 __force *)(desc + 4);
+	dataddr[0] = cpu_to_le64((u64)mrq->cmd->arg);
+	cmdq_log_task_desc_history(cq_host, *task_desc, true);
 }
 
 static void cmdq_pm_qos_vote(struct sdhci_host *host, struct mmc_request *mrq)
@@ -1002,7 +986,6 @@ static int cmdq_halt(struct mmc_host *mmc, bool halt)
 	struct cmdq_host *cq_host = (struct cmdq_host *)mmc_cmdq_private(mmc);
 	u32 ret = 0;
 	int retries = 3;
-	unsigned long flags;
 
 	cmdq_runtime_pm_get(cq_host);
 	if (halt) {
@@ -1024,8 +1007,6 @@ static int cmdq_halt(struct mmc_host *mmc, bool halt)
 		}
 		ret = retries ? 0 : -ETIMEDOUT;
 	} else {
-
-		local_irq_save(flags);
 		if (cq_host->ops->set_transfer_params)
 			cq_host->ops->set_transfer_params(mmc);
 		if (cq_host->ops->set_block_size)
@@ -1034,11 +1015,8 @@ static int cmdq_halt(struct mmc_host *mmc, bool halt)
 			cq_host->ops->set_data_timeout(mmc, 0xf);
 		if (cq_host->ops->clear_set_irqs)
 			cq_host->ops->clear_set_irqs(mmc, true);
-		/* clear the halt flag before we enable cmdq */
-		mmc_host_clr_halt(mmc);
 		cmdq_writel(cq_host, cmdq_readl(cq_host, CQCTL) & ~HALT,
 			    CQCTL);
-		local_irq_restore(flags);
 	}
 	cmdq_runtime_pm_put(cq_host);
 	return ret;

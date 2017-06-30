@@ -11,7 +11,6 @@ config ARM64
 	select ARCH_WANT_FRAME_POINTERS
 	select ARCH_HAVE_CUSTOM_GPIO_H
 	select ARCH_HAS_UBSAN_SANITIZE_ALL
-	select ARCH_THREAD_INFO_ALLOCATOR if !ARM64_64K_PAGES
 	select ARM_AMBA
 	select ARM_ARCH_TIMER
 	select ARM_GIC
@@ -704,7 +703,10 @@ config ARCH_NR_GPIO
 
 
 source kernel/Kconfig.preempt
-source kernel/Kconfig.hz
+
+config HZ
+	int
+	default 100
 
 config ARCH_HAS_HOLES_MEMORYMODEL
 	def_bool y if SPARSEMEM

@@ -24,6 +24,8 @@
 #include "msm_camera_dt_util.h"
 #include "cam_hw_ops.h"
 
+DEFINE_MSM_MUTEX(msm_cci_mutex); //ASUS_BSP PJ_Ma+++
+
 #define V4L2_IDENT_CCI 50005
 #define CCI_I2C_QUEUE_0_SIZE 64
 #define CCI_I2C_Q0_SIZE_128W 128
@@ -32,7 +34,7 @@
 #define CYCLES_PER_MICRO_SEC_DEFAULT 4915
 #define CCI_MAX_DELAY 1000000
 
-#define CCI_TIMEOUT msecs_to_jiffies(500)
+#define CCI_TIMEOUT msecs_to_jiffies(100)
 
 /* TODO move this somewhere else */
 #define MSM_CCI_DRV_NAME "msm_cci"
@@ -115,16 +117,15 @@ static int32_t msm_cci_set_clk_param(struct cci_device *cci_dev,
 	enum cci_i2c_master_t master = c_ctrl->cci_info->cci_i2c_master;
 	enum i2c_freq_mode_t i2c_freq_mode = c_ctrl->cci_info->i2c_freq_mode;
 
+	clk_params = &cci_dev->cci_clk_params[i2c_freq_mode];
+
 	if ((i2c_freq_mode >= I2C_MAX_MODES) || (i2c_freq_mode < 0)) {
 		pr_err("%s:%d invalid i2c_freq_mode = %d",
 			__func__, __LINE__, i2c_freq_mode);
 		return -EINVAL;
 	}
-
 	if (cci_dev->i2c_freq_mode[master] == i2c_freq_mode)
 		return 0;
-
-	clk_params = &cci_dev->cci_clk_params[i2c_freq_mode];
 	if (MASTER_0 == master) {
 		msm_camera_io_w_mb(clk_params->hw_thigh << 16 |
 			clk_params->hw_tlow,
@@ -570,7 +571,7 @@ static int32_t msm_cci_data_queue(struct cci_device *cci_dev,
 	uint32_t read_val = 0;
 	uint32_t reg_offset;
 	uint32_t val = 0;
-	uint32_t max_queue_size, queue_size = 0;
+	uint32_t max_queue_size;
 
 	if (i2c_cmd == NULL) {
 		pr_err("%s:%d Failed line\n", __func__,
@@ -618,11 +619,6 @@ static int32_t msm_cci_data_queue(struct cci_device *cci_dev,
 
 	max_queue_size = cci_dev->cci_i2c_queue_info[master][queue].
 			max_queue_size;
-
-	if (c_ctrl->cmd == MSM_CCI_I2C_WRITE_SEQ)
-		queue_size = max_queue_size;
-	else
-		queue_size = max_queue_size/2;
 	reg_addr = i2c_cmd->reg_addr;
 
 	if (sync_en == MSM_SYNC_ENABLE && cci_dev->valid_sync &&
@@ -653,8 +649,8 @@ static int32_t msm_cci_data_queue(struct cci_device *cci_dev,
 			CCI_I2C_M0_Q0_CUR_WORD_CNT_ADDR + reg_offset);
 		CDBG("%s line %d CUR_WORD_CNT_ADDR %d len %d max %d\n",
 			__func__, __LINE__, read_val, len, max_queue_size);
-		/* + 1 - space alocation for Report CMD */
-		if ((read_val + len + 1) > queue_size) {
+		/* + 1 - space alocation for Report CMD*/
+		if ((read_val + len + 1) > max_queue_size/2) {
 			if ((read_val + len + 1) > max_queue_size) {
 				rc = msm_cci_process_full_q(cci_dev,
 					master, queue);
@@ -847,12 +843,13 @@ static int32_t msm_cci_i2c_read(struct v4l2_subdev *sd,
 		goto ERROR;
 	}
 
-	val = CCI_I2C_WRITE_DISABLE_P_CMD | (read_cfg->addr_type << 4);
-	for (i = 0; i < read_cfg->addr_type; i++) {
-		val |= ((read_cfg->addr >> (i << 3)) & 0xFF)  <<
-		((read_cfg->addr_type - i) << 3);
-	}
-
+	if (read_cfg->addr_type == MSM_CAMERA_I2C_BYTE_ADDR)
+		val = CCI_I2C_WRITE_DISABLE_P_CMD | (read_cfg->addr_type << 4) |
+			((read_cfg->addr & 0xFF) << 8);
+	if (read_cfg->addr_type == MSM_CAMERA_I2C_WORD_ADDR)
+		val = CCI_I2C_WRITE_DISABLE_P_CMD | (read_cfg->addr_type << 4) |
+			(((read_cfg->addr & 0xFF00) >> 8) << 8) |
+			((read_cfg->addr & 0xFF) << 16);
 	rc = msm_cci_write_i2c_queue(cci_dev, val, master, queue);
 	if (rc < 0) {
 		CDBG("%s failed line %d\n", __func__, __LINE__);
@@ -945,7 +942,7 @@ static int32_t msm_cci_i2c_read_bytes(struct v4l2_subdev *sd,
 	uint16_t read_bytes = 0;
 
 	if (!sd || !c_ctrl) {
-		pr_err("%s:%d sd %pK c_ctrl %pK\n", __func__,
+		pr_err("%s:%d sd %p c_ctrl %p\n", __func__,
 			__LINE__, sd, c_ctrl);
 		return -EINVAL;
 	}
@@ -1202,13 +1199,6 @@ static uint32_t *msm_cci_get_clk_rates(struct cci_device *cci_dev,
 	struct msm_cci_clk_params_t *clk_params = NULL;
 	enum i2c_freq_mode_t i2c_freq_mode = c_ctrl->cci_info->i2c_freq_mode;
 	struct device_node *of_node = cci_dev->pdev->dev.of_node;
-
-	if ((i2c_freq_mode >= I2C_MAX_MODES) || (i2c_freq_mode < 0)) {
-		pr_err("%s:%d invalid i2c_freq_mode %d\n",
-			__func__, __LINE__, i2c_freq_mode);
-		return NULL;
-	}
-
 	clk_params = &cci_dev->cci_clk_params[i2c_freq_mode];
 	cci_clk_src = clk_params->cci_clk_src;
 
@@ -1245,7 +1235,7 @@ static int32_t msm_cci_i2c_set_sync_prms(struct v4l2_subdev *sd,
 
 	cci_dev = v4l2_get_subdevdata(sd);
 	if (!cci_dev || !c_ctrl) {
-		pr_err("%s:%d failed: invalid params %pK %pK\n", __func__,
+		pr_err("%s:%d failed: invalid params %p %p\n", __func__,
 			__LINE__, cci_dev, c_ctrl);
 		rc = -EINVAL;
 		return rc;
@@ -1267,7 +1257,7 @@ static int32_t msm_cci_init(struct v4l2_subdev *sd,
 
 	cci_dev = v4l2_get_subdevdata(sd);
 	if (!cci_dev || !c_ctrl) {
-		pr_err("%s:%d failed: invalid params %pK %pK\n", __func__,
+		pr_err("%s:%d failed: invalid params %p %p\n", __func__,
 			__LINE__, cci_dev, c_ctrl);
 		rc = -EINVAL;
 		return rc;
@@ -1546,7 +1536,7 @@ static int32_t msm_cci_write(struct v4l2_subdev *sd,
 
 	cci_dev = v4l2_get_subdevdata(sd);
 	if (!cci_dev || !c_ctrl) {
-		pr_err("%s:%d failed: invalid params %pK %pK\n", __func__,
+		pr_err("%s:%d failed: invalid params %p %p\n", __func__,
 			__LINE__, cci_dev, c_ctrl);
 		rc = -EINVAL;
 		return rc;
@@ -1595,11 +1585,9 @@ static int32_t msm_cci_config(struct v4l2_subdev *sd,
 	struct msm_camera_cci_ctrl *cci_ctrl)
 {
 	int32_t rc = 0;
-	struct cci_device *cci_dev = NULL;
+	mutex_lock(&msm_cci_mutex); //ASUS_BSP PJ_Ma+++
 	CDBG("%s line %d cmd %d\n", __func__, __LINE__,
 		cci_ctrl->cmd);
-	cci_dev = v4l2_get_subdevdata(sd);
-	mutex_lock(&cci_dev->cfg_mutex);
 	switch (cci_ctrl->cmd) {
 	case MSM_CCI_INIT:
 		rc = msm_cci_init(sd, cci_ctrl);
@@ -1626,9 +1614,9 @@ static int32_t msm_cci_config(struct v4l2_subdev *sd,
 	default:
 		rc = -ENOIOCTLCMD;
 	}
+	mutex_unlock(&msm_cci_mutex); //ASUS_BSP PJ_Ma+++
 	CDBG("%s line %d rc %d\n", __func__, __LINE__, rc);
 	cci_ctrl->status = rc;
-	mutex_unlock(&cci_dev->cfg_mutex);
 	return rc;
 }
 
@@ -1995,7 +1983,7 @@ static int msm_cci_probe(struct platform_device *pdev)
 {
 	struct cci_device *new_cci_dev;
 	int rc = 0, i = 0;
-	CDBG("%s: pdev %pK device id = %d\n", __func__, pdev, pdev->id);
+	CDBG("%s: pdev %p device id = %d\n", __func__, pdev, pdev->id);
 	new_cci_dev = kzalloc(sizeof(struct cci_device), GFP_KERNEL);
 	if (!new_cci_dev) {
 		pr_err("%s: no enough memory\n", __func__);
@@ -2007,7 +1995,7 @@ static int msm_cci_probe(struct platform_device *pdev)
 			ARRAY_SIZE(new_cci_dev->msm_sd.sd.name), "msm_cci");
 	v4l2_set_subdevdata(&new_cci_dev->msm_sd.sd, new_cci_dev);
 	platform_set_drvdata(pdev, &new_cci_dev->msm_sd.sd);
-	CDBG("%s sd %pK\n", __func__, &new_cci_dev->msm_sd.sd);
+	CDBG("%s sd %p\n", __func__, &new_cci_dev->msm_sd.sd);
 	if (pdev->dev.of_node)
 		of_property_read_u32((&pdev->dev)->of_node,
 			"cell-index", &pdev->id);
@@ -2082,9 +2070,8 @@ static int msm_cci_probe(struct platform_device *pdev)
 		if (!new_cci_dev->write_wq[i])
 			pr_err("Failed to create write wq\n");
 	}
-	CDBG("%s cci subdev %pK\n", __func__, &new_cci_dev->msm_sd.sd);
+	CDBG("%s cci subdev %p\n", __func__, &new_cci_dev->msm_sd.sd);
 	CDBG("%s line %d\n", __func__, __LINE__);
-	mutex_init(&new_cci_dev->cfg_mutex);
 	return 0;
 
 cci_invalid_vreg_data:

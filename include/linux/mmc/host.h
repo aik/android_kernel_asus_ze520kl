@@ -81,7 +81,6 @@ struct mmc_ios {
 #define MMC_SET_DRIVER_TYPE_A	1
 #define MMC_SET_DRIVER_TYPE_C	2
 #define MMC_SET_DRIVER_TYPE_D	3
-#define MMC_SET_DRIVER_TYPE_4	4		/* eMMC only */
 };
 
 /* states to represent load on the host */
@@ -162,8 +161,7 @@ struct mmc_host_ops {
 	/* Prepare HS400 target operating frequency depending host driver */
 	int	(*prepare_hs400_tuning)(struct mmc_host *host, struct mmc_ios *ios);
 	int	(*enhanced_strobe)(struct mmc_host *host);
-	int	(*select_drive_strength)(struct mmc_host *host,
-					int host_drv, int card_drv);
+	int	(*select_drive_strength)(unsigned int max_dtr, int host_drv, int card_drv);
 	void	(*hw_reset)(struct mmc_host *host);
 	void	(*card_event)(struct mmc_host *host);
 
@@ -231,8 +229,6 @@ struct mmc_async_req {
  * such slot-function drivers.
  */
 struct mmc_slot {
-	bool cd_wakeup;
-	int cd_status;
 	int cd_irq;
 	struct mutex lock;
 	void *handler_priv;
@@ -358,7 +354,6 @@ struct mmc_host {
 	u32			ocr_avail_sd;	/* SD-specific OCR */
 	u32			ocr_avail_mmc;	/* MMC-specific OCR */
 	struct notifier_block	pm_notify;
-	struct wakeup_source	pm_ws;
 	u32			max_current_330;
 	u32			max_current_300;
 	u32			max_current_180;
@@ -406,9 +401,9 @@ struct mmc_host {
 #define MMC_CAP_UHS_SDR104	(1 << 18)	/* Host supports UHS SDR104 mode */
 #define MMC_CAP_UHS_DDR50	(1 << 19)	/* Host supports UHS DDR50 mode */
 #define MMC_CAP_RUNTIME_RESUME	(1 << 20)	/* Resume at runtime_resume. */
-#define MMC_CAP_DRIVER_TYPE_A	(1 << 23)	/* Host supports SD Driver Type A (eMMC Type 1) */
-#define MMC_CAP_DRIVER_TYPE_C	(1 << 24)	/* Host supports SD Driver Type C (eMMC Type 2) */
-#define MMC_CAP_DRIVER_TYPE_D	(1 << 25)	/* Host supports SD Driver Type D (eMMC Type 3) */
+#define MMC_CAP_DRIVER_TYPE_A	(1 << 23)	/* Host supports Driver Type A */
+#define MMC_CAP_DRIVER_TYPE_C	(1 << 24)	/* Host supports Driver Type C */
+#define MMC_CAP_DRIVER_TYPE_D	(1 << 25)	/* Host supports Driver Type D */
 #define MMC_CAP_CMD23		(1 << 30)	/* CMD23 supported. */
 #define MMC_CAP_HW_RESET	(1 << 31)	/* Hardware reset */
 
@@ -445,7 +440,6 @@ struct mmc_host {
 #define MMC_CAP2_SLEEP_AWAKE	(1 << 28)	/* Use Sleep/Awake (CMD5) */
 /* use max discard ignoring max_busy_timeout parameter */
 #define MMC_CAP2_MAX_DISCARD_SIZE	(1 << 29)
-#define MMC_CAP2_DRIVER_TYPE_4		(1 << 31)	/* Host supports eMMC Driver Type 4 */
 
 	mmc_pm_flag_t		pm_caps;	/* supported pm features */
 
@@ -563,6 +557,13 @@ struct mmc_host {
 	} perf;
 	bool perf_enable;
 #endif
+//ASUS_BSP Deeo : mmc suspend stress test +++
+#ifdef CONFIG_MMC_SUSPENDTEST
+	bool suspendtest;
+	unsigned int suspendcnt;
+	unsigned int suspend_datasz;
+#endif
+//ASUS_BSP Deeo : mmc suspend stress test ---
 	enum dev_state dev_status;
 	bool			wakeup_on_idle;
 	struct mmc_cmdq_context_info	cmdq_ctx;

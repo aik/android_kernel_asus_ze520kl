@@ -27,8 +27,7 @@ int32_t msm_camera_cci_i2c_read(struct msm_camera_i2c_client *client,
 	struct msm_camera_cci_ctrl cci_ctrl;
 
 	if ((client->addr_type != MSM_CAMERA_I2C_BYTE_ADDR
-		&& client->addr_type != MSM_CAMERA_I2C_WORD_ADDR
-		&& client->addr_type != MSM_CAMERA_I2C_3B_ADDR)
+		&& client->addr_type != MSM_CAMERA_I2C_WORD_ADDR)
 		|| (data_type != MSM_CAMERA_I2C_BYTE_DATA
 		&& data_type != MSM_CAMERA_I2C_WORD_DATA))
 		return rc;
@@ -64,8 +63,7 @@ int32_t msm_camera_cci_i2c_read_seq(struct msm_camera_i2c_client *client,
 	struct msm_camera_cci_ctrl cci_ctrl;
 
 	if ((client->addr_type != MSM_CAMERA_I2C_BYTE_ADDR
-		&& client->addr_type != MSM_CAMERA_I2C_WORD_ADDR
-		&& client->addr_type != MSM_CAMERA_I2C_3B_ADDR)
+		&& client->addr_type != MSM_CAMERA_I2C_WORD_ADDR)
 		|| num_byte == 0)
 		return rc;
 
@@ -287,7 +285,13 @@ int32_t msm_camera_cci_i2c_write_seq_table(
 		__func__, reg_setting->reg_data_size, I2C_SEQ_REG_DATA_MAX);
 		return rc;
 	}
-
+    
+        if (reg_setting->reg_data_size > I2C_SEQ_REG_DATA_MAX) {
+            pr_err("%s: number of bytes %u exceeding the max supported %d\n",
+            __func__, reg_setting->reg_data_size, I2C_SEQ_REG_DATA_MAX);
+            return rc;
+        }
+        
 	for (i = 0; i < write_setting->size; i++) {
 		rc = msm_camera_cci_i2c_write_seq(client, reg_setting->reg_addr,
 			reg_setting->reg_data, reg_setting->reg_data_size);
@@ -408,7 +412,7 @@ int32_t msm_camera_cci_i2c_poll(struct msm_camera_i2c_client *client,
 			__func__, __LINE__, delay_ms, MAX_POLL_DELAY_MS);
 		return -EINVAL;
 	}
-	for (i = 0; i <= delay_ms; i++) {
+	for (i = 0; i < delay_ms; i++) {
 		rc = msm_camera_cci_i2c_compare(client,
 			addr, data, data_type);
 		if (!rc)

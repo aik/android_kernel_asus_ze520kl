@@ -76,7 +76,6 @@ static irqreturn_t ft5x06_ts_interrupt(int irq, void *data);
 /* register address*/
 #define FT_REG_DEV_MODE		0x00
 #define FT_DEV_MODE_REG_CAL	0x02
-#define FT_REG_FW_ID		0xA1
 #define FT_REG_ID		0xA3
 #define FT_REG_PMODE		0xA5
 #define FT_REG_FW_VER		0xA6
@@ -87,13 +86,6 @@ static irqreturn_t ft5x06_ts_interrupt(int irq, void *data);
 #define FT_REG_RESET_FW		0x07
 #define FT_REG_FW_MIN_VER	0xB2
 #define FT_REG_FW_SUB_MIN_VER	0xB3
-#define FT_REG_I2C_MODE		0xEB
-#define FT_REG_FW_LEN		0xB0
-
-/* i2c mode register value */
-#define FT_VAL_I2C_MODE		0xAA
-#define FT_VAL_I2C_MODE_STD	0x09
-#define FT_VAL_I2C_MODE_STD_CFM	0x08
 
 /* gesture register address*/
 #define FT_REG_GESTURE_ENABLE	0xD0
@@ -153,7 +145,7 @@ static irqreturn_t ft5x06_ts_interrupt(int irq, void *data);
 #define FT_UPGRADE_55		0x55
 
 #define FT_FW_MIN_SIZE		8
-#define FT_FW_MAX_SIZE		65536
+#define FT_FW_MAX_SIZE		32768
 
 /* Firmware file is not supporting minor and sub minor so use 0 */
 #define FT_FW_FILE_MAJ_VER(x)	((x)->data[(x)->size - 2])
@@ -182,7 +174,7 @@ static irqreturn_t ft5x06_ts_interrupt(int irq, void *data);
 #define FT_RETRY_DLY		20
 
 #define FT_MAX_WR_BUF		10
-#define FT_MAX_RD_BUF		3
+#define FT_MAX_RD_BUF		2
 #define FT_FW_PKT_LEN		128
 #define FT_FW_PKT_META_LEN	6
 #define FT_FW_PKT_DLY_MS	20
@@ -256,7 +248,6 @@ static char *ts_info_buff;
 				fw_sub_min)
 
 #define FT_DEBUG_DIR_NAME	"ts_debug"
-#define FT_FW_ID_LEN		2
 
 struct ft5x06_ts_data {
 	struct i2c_client *client;
@@ -297,10 +288,6 @@ struct ft5x06_ts_data {
 	struct clk *core_clk;
 	struct clk *iface_clk;
 #endif
-	bool flash_enabled;
-	bool force_reflash;
-	u8 fw_id[FT_FW_ID_LEN];
-	bool irq_enabled;
 };
 
 static int ft5x06_ts_start(struct device *dev);
@@ -853,22 +840,6 @@ static void ft5x06_update_fw_ver(struct ft5x06_ts_data *data)
 		data->fw_ver[0], data->fw_ver[1], data->fw_ver[2]);
 }
 
-static void ft5x06_update_fw_id(struct ft5x06_ts_data *data)
-{
-	struct i2c_client *client = data->client;
-	u8 reg_addr;
-	int err;
-
-	reg_addr = FT_REG_FW_ID;
-	err = ft5x06_i2c_read(client, &reg_addr, 1,
-		&data->fw_id[0], FT_FW_ID_LEN);
-	if (err < 0)
-		dev_err(&client->dev, "fw id read failed");
-
-	dev_info(&client->dev, "Firmware id = 0x%02x%02x\n",
-		data->fw_id[0], data->fw_id[1]);
-}
-
 static irqreturn_t ft5x06_ts_interrupt(int irq, void *dev_id)
 {
 	struct ft5x06_ts_data *data = dev_id;
@@ -1236,7 +1207,6 @@ static int ft5x06_ts_start(struct device *dev)
 	msleep(data->pdata->soft_rst_dly);
 
 	enable_irq(data->client->irq);
-	data->irq_enabled = true;
 	data->suspended = false;
 
 	return 0;
@@ -1267,7 +1237,6 @@ static int ft5x06_ts_stop(struct device *dev)
 	int i, err;
 
 	disable_irq(data->client->irq);
-	data->irq_enabled = false;
 
 	/* release all touches */
 	for (i = 0; i < data->pdata->num_max_touches; i++) {
@@ -1338,7 +1307,6 @@ pwr_off_fail:
 		gpio_set_value_cansleep(data->pdata->reset_gpio, 1);
 	}
 	enable_irq(data->client->irq);
-	data->irq_enabled = true;
 	return err;
 }
 
@@ -1357,7 +1325,6 @@ static int ft5x06_ts_suspend(struct device *dev)
 		return 0;
 	}
 
-	data->flash_enabled = false;
 	ft5x06_secure_touch_stop(data, true);
 
 	if (ft5x06_gesture_support_enabled() && data->pdata->gesture_support &&
@@ -1386,7 +1353,6 @@ static int ft5x06_ts_resume(struct device *dev)
 		return 0;
 	}
 
-	data->flash_enabled = true;
 	ft5x06_secure_touch_stop(data, true);
 
 	if (ft5x06_gesture_support_enabled() && data->pdata->gesture_support &&
@@ -1586,20 +1552,6 @@ static int ft5x06_fw_upgrade_start(struct i2c_client *client,
 		else
 			msleep(info.delay_55 - (i - (FT_UPGRADE_LOOP / 2)) * 2);
 
-		/* Set i2c to std i2c mode */
-		w_buf[0] = FT_REG_I2C_MODE;
-		w_buf[1] = FT_VAL_I2C_MODE;
-		w_buf[2] = FT_VAL_I2C_MODE_STD;
-		ft5x06_i2c_read(client, w_buf, 3, r_buf, 3);
-		if (FT_REG_I2C_MODE != r_buf[0] ||
-			FT_VAL_I2C_MODE != r_buf[1] ||
-			FT_VAL_I2C_MODE_STD_CFM != r_buf[2]) {
-			dev_err(&client->dev,
-				"set std i2c error. r_val = 0x%02x%02x%02x\n",
-				r_buf[0], r_buf[1], r_buf[2]);
-			continue;
-		}
-
 		/* Enter upgrade mode */
 		w_buf[0] = FT_UPGRADE_55;
 		ft5x06_i2c_write(client, w_buf, 1);
@@ -1661,11 +1613,12 @@ static int ft5x06_fw_upgrade_start(struct i2c_client *client,
 	}
 	msleep(FT_EARSE_DLY_MS);
 
-	w_buf[0] = FT_REG_FW_LEN;
-	w_buf[1] = (u8)((data_len>>16) & 0xff);
-	w_buf[2] = (u8)((data_len>>8) & 0xff);
-	w_buf[3] = (u8)((data_len) & 0xff);
-	ft5x06_i2c_write(client, w_buf, 4);
+	/* program firmware */
+	if (is_5336_new_bootloader == FT_BLOADER_VERSION_LZ4
+		|| is_5336_new_bootloader == FT_BLOADER_VERSION_Z7)
+		data_len = data_len - FT_DATA_LEN_OFF_OLD_FW;
+	else
+		data_len = data_len - FT_DATA_LEN_OFF_NEW_FW;
 
 	pkt_num = (data_len) / FT_FW_PKT_LEN;
 	pkt_len = FT_FW_PKT_LEN;
@@ -1836,7 +1789,6 @@ static int ft5x06_fw_upgrade(struct device *dev, bool force)
 	}
 
 	ft5x06_update_fw_ver(data);
-	ft5x06_update_fw_id(data);
 
 	FT_STORE_TS_DBG_INFO(data->ts_info, data->family_id, data->pdata->name,
 			data->pdata->num_max_touches, data->pdata->group_id,
@@ -1947,230 +1899,6 @@ static ssize_t ft5x06_fw_name_store(struct device *dev,
 
 static DEVICE_ATTR(fw_name, 0664, ft5x06_fw_name_show, ft5x06_fw_name_store);
 
-static ssize_t ft5x06_poweron_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
-{
-	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
-	bool val;
-
-	mutex_lock(&data->input_dev->mutex);
-	val = data->suspended;
-	mutex_unlock(&data->input_dev->mutex);
-
-	return scnprintf(buf, PAGE_SIZE, "%d\n",
-		val == false &&
-		data->flash_enabled);
-}
-
-static DEVICE_ATTR(poweron, 0444, ft5x06_poweron_show, NULL);
-
-static ssize_t ft5x06_productinfo_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
-{
-	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
-
-	return scnprintf(buf, PAGE_SIZE, "%s\n",
-		data->pdata->name);
-}
-
-static DEVICE_ATTR(productinfo, 0444, ft5x06_productinfo_show, NULL);
-
-static ssize_t ft5x06_force_reflash_store(struct device *dev,
-	struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
-	unsigned int input;
-
-	if (sscanf(buf, "%u", &input) != 1)
-		return -EINVAL;
-
-	data->force_reflash = (input == 0) ? false : true;
-
-	return count;
-}
-
-static DEVICE_ATTR(forcereflash, 0220, NULL, ft5x06_force_reflash_store);
-
-static ssize_t ft5x06_flashprog_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
-{
-	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
-
-	return scnprintf(buf, PAGE_SIZE, "%d\n",
-		(data->loading_fw) ? 1 : 0);
-}
-
-static DEVICE_ATTR(flashprog, 0444, ft5x06_flashprog_show, NULL);
-
-static ssize_t ft5x06_do_reflash_store(struct device *dev,
-	struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
-	int retval;
-	char prefix[FT_FW_NAME_MAX_LEN] = "focaltech";
-	char template[FT_FW_NAME_MAX_LEN];
-
-	if (count > FT_FW_NAME_MAX_LEN) {
-		dev_err(&data->client->dev,
-			"%s: FW filename is too long\n",
-			__func__);
-		retval = -EINVAL;
-		goto exit;
-	}
-
-	if (data->suspended) {
-		dev_err(&data->client->dev,
-			"%s: In suspend state, try again later\n",
-			__func__);
-		retval = -EINVAL;
-		goto exit;
-	}
-
-	if (data->loading_fw) {
-		dev_err(&data->client->dev,
-			"%s: In FW flashing state, try again later\n",
-			__func__);
-		retval = -EINVAL;
-		goto exit;
-	}
-
-	if (!data->force_reflash) {
-		if (strncmp(buf, prefix,
-			strnlen(prefix, sizeof(prefix)))) {
-			dev_err(&data->client->dev,
-				"%s: FW does not belong to Focaltech\n",
-				__func__);
-			retval = -EINVAL;
-			goto exit;
-		}
-
-		snprintf(template, sizeof(template), "-%s-",
-						data->pdata->name);
-		if (!strnstr(buf + strnlen(prefix, sizeof(prefix)), template,
-			count)) {
-			dev_err(&data->client->dev,
-				"%s: FW does not belong to %s\n",
-				__func__,
-				data->pdata->name);
-			retval = -EINVAL;
-			goto exit;
-		}
-	}
-
-	strlcpy(data->fw_name, buf, count);
-	dev_dbg(&data->client->dev,
-			"%s: FW filename: %s\n",
-			__func__,
-			data->fw_name);
-
-	mutex_lock(&data->input_dev->mutex);
-	data->loading_fw = true;
-	retval = ft5x06_fw_upgrade(dev, true);
-	if (retval)
-		dev_err(&data->client->dev,
-				"%s: FW %s upgrade failed\n",
-				__func__,
-				data->pdata->name);
-	data->loading_fw = false;
-	mutex_unlock(&data->input_dev->mutex);
-
-	retval = count;
-exit:
-	data->fw_name[0] = 0;
-	return retval;
-}
-
-static DEVICE_ATTR(doreflash, 0220, NULL, ft5x06_do_reflash_store);
-
-static ssize_t ft5x06_build_id_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
-{
-	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
-
-	return scnprintf(buf, PAGE_SIZE, "%02x%02x-%02x\n",
-		data->fw_id[0], data->fw_id[1], data->fw_ver[0]);
-}
-
-static DEVICE_ATTR(buildid, 0444, ft5x06_build_id_show, NULL);
-
-static ssize_t ft5x06_reset_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
-{
-	int retval;
-	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
-
-	if ('1' != buf[0]) {
-		pr_err("Invalid argument for reset\n");
-		return -EINVAL;
-	}
-
-	mutex_lock(&data->input_dev->mutex);
-	if (data->irq_enabled) {
-		disable_irq(data->client->irq);
-		data->irq_enabled = false;
-	}
-	retval = gpio_direction_output(data->pdata->reset_gpio, 0);
-	if (0 == retval) {
-		gpio_set_value_cansleep(data->pdata->reset_gpio, 0);
-		msleep(data->pdata->hard_rst_dly);
-		gpio_set_value_cansleep(data->pdata->reset_gpio, 1);
-	} else {
-		dev_err(&data->client->dev,
-			"set direction for reset gpio failed\n");
-	}
-	msleep(100);
-	enable_irq(data->client->irq);
-	data->irq_enabled = true;
-	mutex_unlock(&data->input_dev->mutex);
-	return count;
-}
-static DEVICE_ATTR(reset, 0220, NULL, ft5x06_reset_store);
-
-static ssize_t ft5x06_drv_irq_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
-{
-	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
-
-	return scnprintf(buf, PAGE_SIZE, "%s\n",
-		data->irq_enabled ? "ENABLED" : "DISABLED");
-}
-
-static ssize_t ft5x06_drv_irq_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
-{
-	unsigned long value = 0;
-	int err = 0;
-	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
-
-	err = kstrtoul(buf, 10, &value);
-	if (err < 0) {
-		pr_err("Failed to convert value\n");
-		return -EINVAL;
-	}
-
-	switch (value) {
-	case 0:
-		/* Disable irq */
-		if (data->irq_enabled) {
-			disable_irq(data->client->irq);
-			data->irq_enabled = false;
-		}
-		break;
-	case 1:
-		/* Enable irq */
-		if (!data->irq_enabled) {
-			enable_irq(data->client->irq);
-			data->irq_enabled = true;
-		}
-		break;
-	default:
-		pr_err("Invalid value\n");
-		return -EINVAL;
-	}
-	return count;
-}
-static DEVICE_ATTR(drv_irq, 0664, ft5x06_drv_irq_show, ft5x06_drv_irq_store);
-
 static ssize_t ts_info_show(struct kobject *kobj,
 		struct kobj_attribute *attr, char *buf)
 {
@@ -2178,109 +1906,6 @@ static ssize_t ts_info_show(struct kobject *kobj,
 	return strnlen(buf, FT_INFO_MAX_LEN);
 }
 static struct kobj_attribute ts_info_attr = __ATTR_RO(ts_info);
-
-#include <linux/major.h>
-#include <linux/kdev_t.h>
-
-/* Attribute: path (RO) */
-static ssize_t path_show(struct device *dev,
-	struct device_attribute *attr, char *buf)
-{
-	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
-	ssize_t blen;
-	const char *path;
-
-	if (!data) {
-		pr_err("cannot get ft_data pointer\n");
-		return (ssize_t)0;
-	}
-	path = kobject_get_path(&data->client->dev.kobj, GFP_KERNEL);
-	blen = scnprintf(buf, PAGE_SIZE, "%s", path ? path : "na");
-	kfree(path);
-	return blen;
-}
-
-/* Attribute: vendor (RO) */
-static ssize_t vendor_show(struct device *dev,
-	struct device_attribute *attr, char *buf)
-{
-	return scnprintf(buf, PAGE_SIZE, "focaltech");
-}
-
-static struct device_attribute touchscreen_attributes[] = {
-	__ATTR_RO(path),
-	__ATTR_RO(vendor),
-	__ATTR_NULL
-};
-
-#define TSDEV_MINOR_BASE 128
-#define TSDEV_MINOR_MAX 32
-
-static int ft5x06_ts_sysfs_class(void *_data, bool create)
-{
-	struct ft5x06_ts_data *data = _data;
-	const struct ft5x06_ts_platform_data *pdata = data->pdata;
-	struct device_attribute *attrs = touchscreen_attributes;
-	int i, error = 0;
-	static struct class *touchscreen_class;
-	static struct device *ts_class_dev;
-	static int minor;
-
-	if (create) {
-		minor = input_get_new_minor(data->client->addr,
-						1, false);
-		if (minor < 0)
-			minor = input_get_new_minor(TSDEV_MINOR_BASE,
-					TSDEV_MINOR_MAX, true);
-		pr_info("assigned minor %d\n", minor);
-
-		touchscreen_class = class_create(THIS_MODULE, "touchscreen");
-		if (IS_ERR(touchscreen_class)) {
-			error = PTR_ERR(touchscreen_class);
-			touchscreen_class = NULL;
-			return error;
-		}
-
-		ts_class_dev = device_create(touchscreen_class, NULL,
-				MKDEV(INPUT_MAJOR, minor),
-				data, pdata->name);
-		if (IS_ERR(ts_class_dev)) {
-			error = PTR_ERR(ts_class_dev);
-			ts_class_dev = NULL;
-			return error;
-		}
-
-		for (i = 0; attrs[i].attr.name != NULL; ++i) {
-			error = device_create_file(ts_class_dev, &attrs[i]);
-			if (error)
-				break;
-		}
-
-		if (error)
-			goto device_destroy;
-	} else {
-		if (!touchscreen_class || !ts_class_dev)
-			return -ENODEV;
-
-		for (i = 0; attrs[i].attr.name != NULL; ++i)
-			device_remove_file(ts_class_dev, &attrs[i]);
-
-		device_unregister(ts_class_dev);
-		class_unregister(touchscreen_class);
-	}
-
-	return 0;
-
-device_destroy:
-	for (--i; i >= 0; --i)
-		device_remove_file(ts_class_dev, &attrs[i]);
-	device_destroy(touchscreen_class, MKDEV(INPUT_MAJOR, minor));
-	ts_class_dev = NULL;
-	class_unregister(touchscreen_class);
-	pr_err("error creating touchscreen class\n");
-
-	return -ENODEV;
-}
 
 static bool ft5x06_debug_addr_is_valid(int addr)
 {
@@ -2688,9 +2313,6 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 	data->input_dev = input_dev;
 	data->client = client;
 	data->pdata = pdata;
-	data->force_reflash = (data->pdata->no_force_update) ? false : true;
-	data->flash_enabled = true;
-	data->irq_enabled = false;
 
 	input_dev->name = "ft5x06_ts";
 	input_dev->id.bustype = BUS_I2C;
@@ -2800,9 +2422,6 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 		goto free_gpio;
 	}
 
-	/* request_threaded_irq enable irq,so set the flag irq_enabled */
-	data->irq_enabled = true;
-
 	if (ft5x06_gesture_support_enabled() && data->pdata->gesture_support) {
 		device_init_wakeup(&client->dev, 1);
 		gesture_pdata = devm_kzalloc(&client->dev,
@@ -2848,48 +2467,6 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 		}
 	}
 
-	err = ft5x06_ts_sysfs_class(data, true);
-	if (err) {
-		dev_err(&client->dev, "sys file creation failed\n");
-		goto free_class_sys;
-	}
-
-	err = device_create_file(&client->dev, &dev_attr_buildid);
-	if (err) {
-		dev_err(&client->dev, "sys file creation failed\n");
-		goto free_buildid_sys;
-	}
-
-	err = device_create_file(&client->dev, &dev_attr_doreflash);
-	if (err) {
-		dev_err(&client->dev, "sys file creation failed\n");
-		goto free_doreflash_sys;
-	}
-
-	err = device_create_file(&client->dev, &dev_attr_flashprog);
-	if (err) {
-		dev_err(&client->dev, "sys file creation failed\n");
-		goto free_flashprog_sys;
-	}
-
-	err = device_create_file(&client->dev, &dev_attr_forcereflash);
-	if (err) {
-		dev_err(&client->dev, "sys file creation failed\n");
-		goto free_forcereflash_sys;
-	}
-
-	err = device_create_file(&client->dev, &dev_attr_productinfo);
-	if (err) {
-		dev_err(&client->dev, "sys file creation failed\n");
-		goto free_productinfo_sys;
-	}
-
-	err = device_create_file(&client->dev, &dev_attr_poweron);
-	if (err) {
-		dev_err(&client->dev, "sys file creation failed\n");
-		goto free_poweron_sys;
-	}
-
 	err = device_create_file(&client->dev, &dev_attr_fw_name);
 	if (err) {
 		dev_err(&client->dev, "sys file creation failed\n");
@@ -2908,23 +2485,11 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 		goto free_update_fw_sys;
 	}
 
-	err = device_create_file(&client->dev, &dev_attr_drv_irq);
-	if (err) {
-		dev_err(&client->dev, "sys file creation failed\n");
-		goto free_force_update_fw_sys;
-	}
-
-	err = device_create_file(&client->dev, &dev_attr_reset);
-	if (err) {
-		dev_err(&client->dev, "sys file creation failed\n");
-		goto free_drv_irq_sys;
-	}
-
 	data->dir = debugfs_create_dir(FT_DEBUG_DIR_NAME, NULL);
 	if (data->dir == NULL || IS_ERR(data->dir)) {
 		pr_err("debugfs_create_dir failed(%ld)\n", PTR_ERR(data->dir));
 		err = PTR_ERR(data->dir);
-		goto free_reset_sys;
+		goto free_force_update_fw_sys;
 	}
 
 	temp = debugfs_create_file("addr", S_IRUSR | S_IWUSR, data->dir, data,
@@ -3016,7 +2581,6 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 
 	ft5x06_update_fw_ver(data);
 	ft5x06_update_fw_vendor_id(data);
-	ft5x06_update_fw_id(data);
 
 	FT_STORE_TS_DBG_INFO(data->ts_info, data->family_id, data->pdata->name,
 			data->pdata->num_max_touches, data->pdata->group_id,
@@ -3050,10 +2614,6 @@ free_secure_touch_sysfs:
 	}
 free_debug_dir:
 	debugfs_remove_recursive(data->dir);
-free_reset_sys:
-	device_remove_file(&client->dev, &dev_attr_reset);
-free_drv_irq_sys:
-	device_remove_file(&client->dev, &dev_attr_drv_irq);
 free_force_update_fw_sys:
 	device_remove_file(&client->dev, &dev_attr_force_update_fw);
 free_update_fw_sys:
@@ -3061,20 +2621,6 @@ free_update_fw_sys:
 free_fw_name_sys:
 	device_remove_file(&client->dev, &dev_attr_fw_name);
 free_pocket_sys:
-	device_remove_file(&client->dev, &dev_attr_poweron);
-free_poweron_sys:
-	device_remove_file(&client->dev, &dev_attr_productinfo);
-free_productinfo_sys:
-	device_remove_file(&client->dev, &dev_attr_forcereflash);
-free_forcereflash_sys:
-	device_remove_file(&client->dev, &dev_attr_flashprog);
-free_flashprog_sys:
-	device_remove_file(&client->dev, &dev_attr_doreflash);
-free_doreflash_sys:
-	device_remove_file(&client->dev, &dev_attr_buildid);
-free_buildid_sys:
-	ft5x06_ts_sysfs_class(data, false);
-free_class_sys:
 	if (ft5x06_gesture_support_enabled() && data->pdata->gesture_support)
 		device_remove_file(&client->dev, &dev_attr_pocket);
 free_enable_sys:
@@ -3138,19 +2684,10 @@ static int ft5x06_ts_remove(struct i2c_client *client)
 		data->gesture_pdata = NULL;
 	}
 
-	ft5x06_ts_sysfs_class(data, false);
 	debugfs_remove_recursive(data->dir);
 	device_remove_file(&client->dev, &dev_attr_force_update_fw);
 	device_remove_file(&client->dev, &dev_attr_update_fw);
 	device_remove_file(&client->dev, &dev_attr_fw_name);
-	device_remove_file(&client->dev, &dev_attr_poweron);
-	device_remove_file(&client->dev, &dev_attr_productinfo);
-	device_remove_file(&client->dev, &dev_attr_forcereflash);
-	device_remove_file(&client->dev, &dev_attr_flashprog);
-	device_remove_file(&client->dev, &dev_attr_doreflash);
-	device_remove_file(&client->dev, &dev_attr_buildid);
-	device_remove_file(&client->dev, &dev_attr_drv_irq);
-	device_remove_file(&client->dev, &dev_attr_reset);
 
 #if defined(CONFIG_FB)
 	if (fb_unregister_client(&data->fb_notif))

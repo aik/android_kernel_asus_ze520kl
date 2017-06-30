@@ -48,11 +48,12 @@ struct thread_info {
 	mm_segment_t		addr_limit;	/* address limit */
 	struct task_struct	*task;		/* main task structure */
 	struct exec_domain	*exec_domain;	/* execution domain */
+	struct restart_block	restart_block;
 	int			preempt_count;	/* 0 => preemptable, <0 => bug */
 	int			cpu;		/* cpu */
-#ifdef CONFIG_ARCH_THREAD_INFO_ALLOCATOR
-	phys_addr_t		phys_addr;	/* set if vmalloc */
-#endif
+	struct mutex *		pWaitingMutex;          //ASUS_BSP + [thomas]Add for slow log
+	struct completion *	pWaitingCompletion;     //ASUS_BSP + [thomas]Add for slow log
+	struct rt_mutex *	pWaitingRTMutex;        //ASUS_BSP + [thomas]Add for slow log
 };
 
 #define INIT_THREAD_INFO(tsk)						\
@@ -62,6 +63,9 @@ struct thread_info {
 	.flags		= 0,						\
 	.preempt_count	= INIT_PREEMPT_COUNT,				\
 	.addr_limit	= KERNEL_DS,					\
+	.restart_block	= {						\
+		.fn	= do_no_restart_syscall,			\
+	},								\
 }
 
 #define init_thread_info	(init_thread_union.thread_info)
@@ -89,12 +93,6 @@ static inline struct thread_info *current_thread_info(void)
 	((unsigned long)(tsk->thread.cpu_context.sp))
 #define thread_saved_fp(tsk)	\
 	((unsigned long)(tsk->thread.cpu_context.fp))
-
-#ifdef CONFIG_ARCH_THREAD_INFO_ALLOCATOR
-struct thread_info *alloc_thread_info_node(struct task_struct *tsk,
-						  int node);
-void free_thread_info(struct thread_info *ti);
-#endif
 
 #endif
 

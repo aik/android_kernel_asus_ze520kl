@@ -632,13 +632,6 @@ static int mmc_blk_ioctl_cmd(struct block_device *bdev,
 		goto cmd_done;
 	}
 
-#ifdef CONFIG_MMC_FFU
-	if (idata->ic.opcode == MMC_FFU_INVOKE_OP) {
-		err = mmc_ffu_invoke(card, idata->buf);
-		goto cmd_done;
-	}
-#endif
-
 	cmd.opcode = idata->ic.opcode;
 	cmd.arg = idata->ic.arg;
 	cmd.flags = idata->ic.flags;
@@ -1532,6 +1525,13 @@ static int mmc_blk_cmdq_issue_discard_rq(struct mmc_queue *mq,
 	from = blk_rq_pos(req);
 	nr = blk_rq_sectors(req);
 
+//ASUS_BSP Deeo : mmc suspend stress test +++
+#ifdef CONFIG_MMC_SUSPEND_TEST
+	if (card->host->suspendtest)
+             card->sectors_changed += blk_rq_sectors(req);
+#endif
+//ASUS_BSP Deeo : mmc suspend stress test ---
+
 	if (mmc_can_discard(card))
 		arg = MMC_DISCARD_ARG;
 	else if (mmc_can_trim(card))
@@ -1574,6 +1574,14 @@ static int mmc_blk_issue_discard_rq(struct mmc_queue *mq, struct request *req)
 
 	from = blk_rq_pos(req);
 	nr = blk_rq_sectors(req);
+
+//ASUS_BSP Deeo : mmc suspend stress test +++
+#ifdef CONFIG_MMC_SUSPEND_TEST
+        if (card->host->suspendtest)
+                 card->sectors_changed += blk_rq_sectors(req);
+#endif
+//ASUS_BSP Deeo : mmc suspend stress test ---
+
 
 	if (mmc_can_discard(card))
 		arg = MMC_DISCARD_ARG;
@@ -1620,6 +1628,13 @@ static int mmc_blk_cmdq_issue_secdiscard_rq(struct mmc_queue *mq,
 
 	from = blk_rq_pos(req);
 	nr = blk_rq_sectors(req);
+
+//ASUS_BSP Deeo : mmc suspend stress test +++
+#ifdef CONFIG_MMC_SUSPEND_TEST
+	if (card->host->suspendtest)
+             card->sectors_changed += blk_rq_sectors(req);
+#endif
+//ASUS_BSP Deeo : mmc suspend stress test ---
 
 	if (mmc_can_trim(card) && !mmc_erase_group_aligned(card, from, nr))
 		arg = MMC_SECURE_TRIM1_ARG;
@@ -1681,6 +1696,13 @@ static int mmc_blk_issue_secdiscard_rq(struct mmc_queue *mq,
 
 	from = blk_rq_pos(req);
 	nr = blk_rq_sectors(req);
+
+//ASUS_BSP Deeo : mmc suspend stress test +++
+#ifdef CONFIG_MMC_SUSPEND_TEST
+	if (card->host->suspendtest)
+             card->sectors_changed += blk_rq_sectors(req);
+#endif
+//ASUS_BSP Deeo : mmc suspend stress test ---
 
 	if (mmc_can_trim(card) && !mmc_erase_group_aligned(card, from, nr))
 		arg = MMC_SECURE_TRIM1_ARG;
@@ -2455,8 +2477,15 @@ static u8 mmc_blk_prep_packed_list(struct mmc_queue *mq, struct request *req)
 			}
 		}
 
-		if (rq_data_dir(next) == WRITE)
+		if (rq_data_dir(next) == WRITE) {
 			mq->num_of_potential_packed_wr_reqs++;
+//ASUS_BSP Deeo : mmc suspend stress test +++
+#ifdef CONFIG_MMC_SUSPENDTEST
+		if (card->host->suspendtest)
+			card->sectors_changed += blk_rq_sectors(next);
+#endif
+//ASUS_BSP Deeo : mmc suspend stress test ---
+		}
 		list_add_tail(&next->queuelist, &mqrq->packed->list);
 		cur = next;
 		reqs++;
@@ -2499,7 +2528,7 @@ static void mmc_blk_packed_hdr_wrq_prep(struct mmc_queue_req *mqrq,
 	struct mmc_blk_data *md = mq->data;
 	struct mmc_packed *packed = mqrq->packed;
 	bool do_rel_wr, do_data_tag;
-	__le32 *packed_cmd_hdr;
+	u32 *packed_cmd_hdr;
 	u8 hdr_blocks;
 	u8 i = 1;
 
@@ -2511,8 +2540,8 @@ static void mmc_blk_packed_hdr_wrq_prep(struct mmc_queue_req *mqrq,
 
 	packed_cmd_hdr = packed->cmd_hdr;
 	memset(packed_cmd_hdr, 0, sizeof(packed->cmd_hdr));
-	packed_cmd_hdr[0] = cpu_to_le32((packed->nr_entries << 16) |
-		(PACKED_CMD_WR << 8) | PACKED_CMD_VER);
+	packed_cmd_hdr[0] = (packed->nr_entries << 16) |
+		(PACKED_CMD_WR << 8) | PACKED_CMD_VER;
 	hdr_blocks = mmc_large_sector(card) ? 8 : 1;
 
 	/*
@@ -2526,14 +2555,14 @@ static void mmc_blk_packed_hdr_wrq_prep(struct mmc_queue_req *mqrq,
 			((brq->data.blocks * brq->data.blksz) >=
 			 card->ext_csd.data_tag_unit_size);
 		/* Argument of CMD23 */
-		packed_cmd_hdr[(i * 2)] = cpu_to_le32(
+		packed_cmd_hdr[(i * 2)] =
 			(do_rel_wr ? MMC_CMD23_ARG_REL_WR : 0) |
 			(do_data_tag ? MMC_CMD23_ARG_TAG_REQ : 0) |
-			blk_rq_sectors(prq));
+			blk_rq_sectors(prq);
 		/* Argument of CMD18 or CMD25 */
-		packed_cmd_hdr[((i * 2)) + 1] = cpu_to_le32(
+		packed_cmd_hdr[((i * 2)) + 1] =
 			mmc_card_blockaddr(card) ?
-			blk_rq_pos(prq) : blk_rq_pos(prq) << 9);
+			blk_rq_pos(prq) : blk_rq_pos(prq) << 9;
 		packed->blocks += blk_rq_sectors(prq);
 		i++;
 	}
@@ -2828,6 +2857,14 @@ static int mmc_blk_cmdq_issue_rw_rq(struct mmc_queue *mq, struct request *req)
 		    && (rq_data_dir(req) == READ))
 			active_small_sector_read = 1;
 	}
+
+//ASUS_BSP Deeo : mmc suspend stress test +++
+#ifdef CONFIG_MMC_SUSPENDTEST
+    if ((card->host->suspendtest) && (rq_data_dir(req) == WRITE))
+            card->sectors_changed += blk_rq_sectors(req);
+#endif
+//ASUS_BSP Deeo : mmc suspend stress test ---
+
 	ret = mmc_blk_cmdq_start_req(card->host, mc_rq);
 	if (!ret && active_small_sector_read)
 		host->cmdq_ctx.active_small_sector_read_reqs++;
@@ -3271,8 +3308,15 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 	if (!rqc && !mq->mqrq_prev->req)
 		return 0;
 
-	if (rqc)
+	if (rqc) {
+//ASUS_BSP Deeo : mmc suspend stress test +++
+#ifdef CONFIG_MMC_SUSPENDTEST
+		if ((card->host->suspendtest) && (rq_data_dir(rqc) == WRITE))
+			card->sectors_changed += blk_rq_sectors(rqc);
+#endif
+//ASUS_BSP Deeo : mmc suspend stress test ---
 		reqs = mmc_blk_prep_packed_list(mq, rqc);
+	}
 
 	do {
 		if (rqc) {
@@ -4029,11 +4073,10 @@ static const struct mmc_fixup blk_fixups[] =
 		  add_quirk_mmc, MMC_QUIRK_CMDQ_EMPTY_BEFORE_DCMD),
 
 	/*
-	 * Some MMC cards need longer data read timeout than indicated in CSD.
+	 * Some Micron MMC cards needs longer data read timeout than
+	 * indicated in CSD.
 	 */
 	MMC_FIXUP(CID_NAME_ANY, CID_MANFID_MICRON, 0x200, add_quirk_mmc,
-		  MMC_QUIRK_LONG_READ_TIME),
-	MMC_FIXUP("008GE0", CID_MANFID_TOSHIBA, CID_OEMID_ANY, add_quirk_mmc,
 		  MMC_QUIRK_LONG_READ_TIME),
 
 	/*

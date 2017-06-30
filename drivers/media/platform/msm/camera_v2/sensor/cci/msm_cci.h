@@ -23,6 +23,10 @@
 #include "msm_sd.h"
 #include "cam_soc_api.h"
 
+//ASUS_BSP PJ_Ma+++
+#define DEFINE_MSM_MUTEX(mutexname) \
+	static struct mutex mutexname = __MUTEX_INITIALIZER(mutexname)
+//ASUS_BSP PJ_Ma---
 #define NUM_MASTERS 2
 #define NUM_QUEUES 2
 
@@ -90,7 +94,7 @@ struct msm_camera_cci_gpio_cfg {
 };
 
 struct msm_camera_cci_i2c_read_cfg {
-	uint32_t addr;
+	uint16_t addr;
 	enum msm_camera_i2c_reg_addr_type addr_type;
 	uint8_t *data;
 	uint16_t num_byte;
@@ -180,7 +184,6 @@ struct cci_device {
 	struct workqueue_struct *write_wq[MASTER_MAX];
 	struct msm_camera_cci_wait_sync_cfg cci_wait_sync_cfg;
 	uint8_t valid_sync;
-	struct mutex cfg_mutex;
 };
 
 enum msm_cci_i2c_cmd_type {
