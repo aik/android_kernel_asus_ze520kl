@@ -17,7 +17,7 @@
 #include <linux/kernel.h>
 #include <linux/delay.h>
 #include <linux/mfd/wcd9xxx/core.h>
-#include <linux/mfd/wcd9xxx/wcd9xxx_registers.h>
+#include <uapi/linux/mfd/wcd9xxx/wcd9xxx_registers.h>
 #include "wcd9xxx-common-v2.h"
 
 #define WCD_USLEEP_RANGE 50
