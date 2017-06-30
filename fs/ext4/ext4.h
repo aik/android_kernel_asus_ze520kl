@@ -233,7 +233,6 @@ struct ext4_io_submit {
 #define	EXT4_MAX_BLOCK_SIZE		65536
 #define EXT4_MIN_BLOCK_LOG_SIZE		10
 #define EXT4_MAX_BLOCK_LOG_SIZE		16
-#define EXT4_MAX_CLUSTER_LOG_SIZE	30
 #ifdef __KERNEL__
 # define EXT4_BLOCK_SIZE(s)		((s)->s_blocksize)
 #else
@@ -812,29 +811,6 @@ do {									       \
 #include "extents_status.h"
 
 /*
- * Lock subclasses for i_data_sem in the ext4_inode_info structure.
- *
- * These are needed to avoid lockdep false positives when we need to
- * allocate blocks to the quota inode during ext4_map_blocks(), while
- * holding i_data_sem for a normal (non-quota) inode.  Since we don't
- * do quota tracking for the quota inode, this avoids deadlock (as
- * well as infinite recursion, since it isn't turtles all the way
- * down...)
- *
- *  I_DATA_SEM_NORMAL - Used for most inodes
- *  I_DATA_SEM_OTHER  - Used by move_inode.c for the second normal inode
- *			  where the second inode has larger inode number
- *			  than the first
- *  I_DATA_SEM_QUOTA  - Used for quota inodes only
- */
-enum {
-	I_DATA_SEM_NORMAL = 0,
-	I_DATA_SEM_OTHER,
-	I_DATA_SEM_QUOTA,
-};
-
-
-/*
  * fourth extended file system inode data in memory
  */
 struct ext4_inode_info {
@@ -1359,7 +1335,7 @@ struct ext4_sb_info {
 	struct shrinker s_es_shrinker;
 	struct list_head s_es_lru;
 	struct ext4_es_stats s_es_stats;
-	struct mb2_cache *s_mb_cache;
+	struct mb_cache *s_mb_cache;
 	spinlock_t s_es_lru_lock ____cacheline_aligned_in_smp;
 
 	/* Ratelimit ext4 messages. */
@@ -2195,8 +2171,7 @@ extern int search_dir(struct buffer_head *bh,
 		      struct inode *dir,
 		      const struct qstr *d_name,
 		      unsigned int offset,
-		      struct ext4_dir_entry_2 **res_dir,
-		      int flags);
+		      struct ext4_dir_entry_2 **res_dir);
 extern int ext4_generic_delete_entry(handle_t *handle,
 				     struct inode *dir,
 				     struct ext4_dir_entry_2 *de_del,
@@ -2657,8 +2632,7 @@ extern int htree_inlinedir_to_tree(struct file *dir_file,
 extern struct buffer_head *ext4_find_inline_entry(struct inode *dir,
 					const struct qstr *d_name,
 					struct ext4_dir_entry_2 **res_dir,
-					int *has_inline_data,
-					int flags);
+					int *has_inline_data);
 extern int ext4_delete_inline_entry(handle_t *handle,
 				    struct inode *dir,
 				    struct ext4_dir_entry_2 *de_del,

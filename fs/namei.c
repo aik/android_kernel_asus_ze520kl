@@ -2009,16 +2009,6 @@ static int path_lookupat(int dfd, const char *name,
 		}
 	}
 
-	if (!err) {
-		struct super_block *sb = nd->inode->i_sb;
-		if (sb->s_flags & MS_RDONLY) {
-			if (d_is_su(nd->path.dentry) && !su_visible()) {
-				path_put(&nd->path);
-				err = -ENOENT;
-			}
-		}
-	}
-
 out:
 	if (base)
 		fput(base);
@@ -2456,7 +2446,7 @@ static int may_delete(struct inode *dir, struct dentry *victim, bool isdir)
 	struct inode *inode = victim->d_inode;
 	int error;
 
-	if (d_is_negative(victim) || d_unhashed(victim))
+	if (d_is_negative(victim))
 		return -ENOENT;
 	BUG_ON(!inode);
 
@@ -2813,10 +2803,22 @@ no_open:
 		dentry = lookup_real(dir, dentry, nd->flags);
 		if (IS_ERR(dentry))
 			return PTR_ERR(dentry);
-	}
-	if (create_error && !dentry->d_inode) {
-		error = create_error;
-		goto out;
+
+		if (create_error) {
+			int open_flag = op->open_flag;
+
+			error = create_error;
+			if ((open_flag & O_EXCL)) {
+				if (!dentry->d_inode)
+					goto out;
+			} else if (!dentry->d_inode) {
+				goto out;
+			} else if ((open_flag & O_TRUNC) &&
+				   S_ISREG(dentry->d_inode->i_mode)) {
+				goto out;
+			}
+			/* will fail later, go on to get the right error */
+		}
 	}
 looked_up:
 	path->dentry = dentry;
