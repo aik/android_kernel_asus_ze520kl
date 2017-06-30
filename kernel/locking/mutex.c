@@ -46,6 +46,8 @@
 # include <asm/mutex.h>
 #endif
 
+extern struct mutex fake_mutex;
+
 void
 __mutex_init(struct mutex *lock, const char *name, struct lock_class_key *key)
 {
@@ -56,6 +58,8 @@ __mutex_init(struct mutex *lock, const char *name, struct lock_class_key *key)
 #ifdef CONFIG_MUTEX_SPIN_ON_OWNER
 	osq_lock_init(&lock->osq);
 #endif
+	//added by jack
+	lock->name = name;
 
 	debug_mutex_init(lock, name, key);
 }
@@ -411,14 +415,9 @@ void __sched mutex_unlock(struct mutex *lock)
 	 * The unlocking fastpath is the 0->1 transition from 'locked'
 	 * into 'unlocked' state:
 	 */
-#ifndef CONFIG_DEBUG_MUTEXES
-	/*
-	 * When debugging is enabled we must not clear the owner before time,
-	 * the slow path will always be taken, and that clears the owner field
-	 * after verifying that it was indeed current.
-	 */
-	mutex_clear_owner(lock);
-#endif
+
+	mutex_clear_owner(lock); //added by jack for debugging mutex deadlock
+
 	__mutex_fastpath_unlock(&lock->count, __mutex_unlock_slowpath);
 }
 
@@ -471,6 +470,9 @@ __mutex_lock_check_stamp(struct mutex *lock, struct ww_acquire_ctx *ctx)
 	if (!hold_ctx)
 		return 0;
 
+	if (unlikely(ctx == hold_ctx))
+		return -EALREADY;
+
 	if (ctx->stamp - hold_ctx->stamp <= LONG_MAX &&
 	    (ctx->stamp != hold_ctx->stamp || ctx > hold_ctx)) {
 #ifdef CONFIG_DEBUG_MUTEXES
@@ -495,12 +497,6 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 	struct mutex_waiter waiter;
 	unsigned long flags;
 	int ret;
-
-	if (use_ww_ctx) {
-		struct ww_mutex *ww = container_of(lock, struct ww_mutex, base);
-		if (unlikely(ww_ctx == READ_ONCE(ww->ctx)))
-			return -EALREADY;
-	}
 
 	preempt_disable();
 	mutex_acquire_nest(&lock->dep_map, subclass, 0, nest_lock, ip);
@@ -563,7 +559,9 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 
 		/* didn't get the lock, go to sleep: */
 		spin_unlock_mutex(&lock->wait_lock, flags);
+		task_thread_info(task)->pWaitingMutex = lock;
 		schedule_preempt_disabled();
+		task_thread_info(task)->pWaitingMutex = &fake_mutex;
 		spin_lock_mutex(&lock->wait_lock, flags);
 	}
 	mutex_remove_waiter(lock, &waiter, current_thread_info());

@@ -2460,18 +2460,13 @@ static inline void kmemleak_load_module(const struct module *mod,
 #endif
 
 #ifdef CONFIG_MODULE_SIG
-static int module_sig_check(struct load_info *info, int flags)
+static int module_sig_check(struct load_info *info)
 {
 	int err = -ENOKEY;
 	const unsigned long markerlen = sizeof(MODULE_SIG_STRING) - 1;
 	const void *mod = info->hdr;
 
-	/*
-	 * Require flags == 0, as a module with version information
-	 * removed is no longer the module that was signed
-	 */
-	if (flags == 0 &&
-	    info->len > markerlen &&
+	if (info->len > markerlen &&
 	    memcmp(mod + info->len - markerlen, MODULE_SIG_STRING, markerlen) == 0) {
 		/* We truncate the module to discard the signature */
 		info->len -= markerlen;
@@ -2490,7 +2485,7 @@ static int module_sig_check(struct load_info *info, int flags)
 	return err;
 }
 #else /* !CONFIG_MODULE_SIG */
-static int module_sig_check(struct load_info *info, int flags)
+static int module_sig_check(struct load_info *info)
 {
 	return 0;
 }
@@ -3055,55 +3050,6 @@ static void do_free_init(struct rcu_head *head)
 	kfree(m);
 }
 
-#ifdef CONFIG_MODULE_EXTRA_COPY
-/* Make an extra copy of the module. */
-static int make_extra_copy(Elf_Ehdr *elf_hdr, unsigned long elf_len,
-			   void **extra_copy)
-{
-	void *dest = *extra_copy = vmalloc(elf_len);
-
-	if (dest == NULL)
-		return -ENOMEM;
-	memcpy(dest, elf_hdr, elf_len);
-	return 0;
-}
-
-/* Keep the linked copy as well as the raw copy, in case the
- * module wants to inspect both. */
-static int keep_extra_copy_info(struct module *mod, void *extra_copy,
-				Elf_Ehdr *elf_hdr, unsigned long elf_len)
-{
-	mod->raw_binary_ptr = extra_copy;
-	mod->raw_binary_size = elf_len;
-	mod->linked_binary_ptr = elf_hdr;
-	mod->linked_binary_size = elf_len;
-	return 1;
-}
-
-/* Release module extra copy information. */
-static void cleanup_extra_copy_info(struct module *mod)
-{
-	vfree(mod->raw_binary_ptr);
-	vfree(mod->linked_binary_ptr);
-	mod->raw_binary_ptr = mod->linked_binary_ptr = NULL;
-	mod->raw_binary_size = mod->linked_binary_size = 0;
-}
-#else/* !CONFIG_MODULE_EXTRA_COPY */
-static inline int make_extra_copy(Elf_Ehdr *elf_hdr, unsigned long elf_len,
-				  void **extra_copy)
-{
-	*extra_copy = NULL;
-	return 0;
-}
-static inline int keep_extra_copy_info(struct module *mod, void *extra_copy,
-				       Elf_Ehdr *elf_hdr,
-				       unsigned long elf_len)
-{
-	return 0;
-}
-static inline void cleanup_extra_copy_info(struct module *mod) { }
-#endif/* CONFIG_MODULE_EXTRA_COPY */
-
 /* This is where the real work happens */
 static int do_init_module(struct module *mod)
 {
@@ -3127,7 +3073,6 @@ static int do_init_module(struct module *mod)
 	/* Start the module */
 	if (mod->init != NULL)
 		ret = do_one_initcall(mod->init);
-	cleanup_extra_copy_info(mod);
 	if (ret < 0) {
 		goto fail_free_freeinit;
 	}
@@ -3305,9 +3250,8 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	struct module *mod;
 	long err;
 	char *after_dashes;
-	void *extra_copy = NULL;
 
-	err = module_sig_check(info, flags);
+	err = module_sig_check(info);
 	if (err)
 		goto free_copy;
 
@@ -3315,16 +3259,11 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	if (err)
 		goto free_copy;
 
-	/* Make extra copy of the module, if needed. */
-	err = make_extra_copy(info->hdr, info->len, &extra_copy);
-	if (err)
-		goto free_copy;
-
 	/* Figure out module layout, and allocate all the memory. */
 	mod = layout_and_allocate(info, flags);
 	if (IS_ERR(mod)) {
 		err = PTR_ERR(mod);
-		goto free_extra_copy;
+		goto free_copy;
 	}
 
 	/* Reserve our place in the list. */
@@ -3413,11 +3352,8 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	if (err < 0)
 		goto bug_cleanup;
 
-	/* Keep extra copy information, if needed. */
-	if (!keep_extra_copy_info(mod, extra_copy, info->hdr, info->len)) {
-		/* Get rid of temporary copy. */
-		free_copy(info);
-	}
+	/* Get rid of temporary copy. */
+	free_copy(info);
 
 	/* Done! */
 	trace_module_load(mod);
@@ -3455,8 +3391,6 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	mutex_unlock(&module_mutex);
  free_module:
 	module_deallocate(mod, info);
- free_extra_copy:
-	vfree(extra_copy);
  free_copy:
 	free_copy(info);
 	return err;

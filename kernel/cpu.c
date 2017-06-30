@@ -189,29 +189,17 @@ void cpu_hotplug_done(void)
  * hotplug path before performing hotplug operations. So acquiring that lock
  * guarantees mutual exclusion from any currently running hotplug operations.
  */
-
-static void _cpu_hotplug_disable(void)
-{
-	cpu_hotplug_disabled++;
-}
 void cpu_hotplug_disable(void)
 {
 	cpu_maps_update_begin();
-	_cpu_hotplug_disable();
+	cpu_hotplug_disabled = 1;
 	cpu_maps_update_done();
 }
 
-static void _cpu_hotplug_enable(void)
-{
-	if (--cpu_hotplug_disabled < 0) {
-		WARN(1, "unbalanced hotplug enable %d\n", cpu_hotplug_disabled);
-		cpu_hotplug_disabled = 0;
-	}
-}
 void cpu_hotplug_enable(void)
 {
 	cpu_maps_update_begin();
-	_cpu_hotplug_enable();
+	cpu_hotplug_disabled = 0;
 	cpu_maps_update_done();
 }
 
@@ -590,11 +578,11 @@ int disable_nonboot_cpus(void)
 
 	if (!error) {
 		BUG_ON(num_online_cpus() > 1);
+		/* Make sure the CPUs won't be enabled by someone else */
+		cpu_hotplug_disabled = 1;
 	} else {
 		pr_err("Non-boot CPUs are not disabled\n");
 	}
-
-	_cpu_hotplug_disable();
 	cpu_maps_update_done();
 	return error;
 }
@@ -610,11 +598,10 @@ void __weak arch_enable_nonboot_cpus_end(void)
 void __ref enable_nonboot_cpus(void)
 {
 	int cpu, error;
-	struct device *cpu_device;
 
 	/* Allow everyone to use the CPU hotplug again */
 	cpu_maps_update_begin();
-	_cpu_hotplug_enable();
+	cpu_hotplug_disabled = 0;
 	if (cpumask_empty(frozen_cpus))
 		goto out;
 
@@ -628,12 +615,6 @@ void __ref enable_nonboot_cpus(void)
 		trace_suspend_resume(TPS("CPU_ON"), cpu, false);
 		if (!error) {
 			pr_info("CPU%d is up\n", cpu);
-			cpu_device = get_cpu_device(cpu);
-			if (!cpu_device)
-				pr_err("%s: failed to get cpu%d device\n",
-				       __func__, cpu);
-			else
-				kobject_uevent(&cpu_device->kobj, KOBJ_ONLINE);
 			continue;
 		}
 		pr_warn("Error taking CPU%d up: %d\n", cpu, error);

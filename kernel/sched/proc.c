@@ -7,7 +7,9 @@
 #include <linux/export.h>
 
 #include "sched.h"
-
+#define LOAD_INT(x) ((x) >> FSHIFT)
+#define LOAD_FRAC(x) LOAD_INT(((x) & (FIXED_1-1)) * 100)
+extern struct work_struct __dumpthread_work;
 /*
  * Global load-average calculations
  *
@@ -97,13 +99,10 @@ long calc_load_fold_active(struct rq *this_rq)
 static unsigned long
 calc_load(unsigned long load, unsigned long exp, unsigned long active)
 {
-	unsigned long newload;
-
-	newload = load * exp + active * (FIXED_1 - exp);
-	if (active >= load)
-		newload += FIXED_1-1;
-
-	return newload / FIXED_1;
+	load *= exp;
+	load += active * (FIXED_1 - exp);
+	load += 1UL << (FSHIFT - 1);
+	return load >> FSHIFT;
 }
 
 #ifdef CONFIG_NO_HZ_COMMON
@@ -322,6 +321,9 @@ static void calc_global_nohz(void)
 		calc_load_update += n * LOAD_FREQ;
 	}
 
+	printk("loadavg %lu.%02lu  %ld/%d \n", LOAD_INT(avenrun[0]), LOAD_FRAC(avenrun[0]), nr_running(), nr_threads);
+	if(LOAD_INT(avenrun[0]) > 14 )
+	    schedule_work(&__dumpthread_work);
 	/*
 	 * Flip the idle index...
 	 *

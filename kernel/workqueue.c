@@ -624,35 +624,6 @@ static void set_work_pool_and_clear_pending(struct work_struct *work,
 	 */
 	smp_wmb();
 	set_work_data(work, (unsigned long)pool_id << WORK_OFFQ_POOL_SHIFT, 0);
-	/*
-	 * The following mb guarantees that previous clear of a PENDING bit
-	 * will not be reordered with any speculative LOADS or STORES from
-	 * work->current_func, which is executed afterwards.  This possible
-	 * reordering can lead to a missed execution on attempt to qeueue
-	 * the same @work.  E.g. consider this case:
-	 *
-	 *   CPU#0                         CPU#1
-	 *   ----------------------------  --------------------------------
-	 *
-	 * 1  STORE event_indicated
-	 * 2  queue_work_on() {
-	 * 3    test_and_set_bit(PENDING)
-	 * 4 }                             set_..._and_clear_pending() {
-	 * 5                                 set_work_data() # clear bit
-	 * 6                                 smp_mb()
-	 * 7                               work->current_func() {
-	 * 8				      LOAD event_indicated
-	 *				   }
-	 *
-	 * Without an explicit full barrier speculative LOAD on line 8 can
-	 * be executed before CPU#0 does STORE on line 1.  If that happens,
-	 * CPU#0 observes the PENDING bit is still set and new execution of
-	 * a @work is not queued in a hope, that CPU#1 will eventually
-	 * finish the queued @work.  Meanwhile CPU#1 does not see
-	 * event_indicated is set, because speculative LOAD was executed
-	 * before actual STORE.
-	 */
-	smp_mb();
 }
 
 static void clear_work_data(struct work_struct *work)
@@ -1469,6 +1440,8 @@ static void __queue_delayed_work(int cpu, struct workqueue_struct *wq,
 		return;
 	}
 
+	timer_stats_timer_set_start_info(&dwork->timer);
+
 	dwork->wq = wq;
 	dwork->cpu = cpu;
 	timer->expires = jiffies + delay;
@@ -1960,6 +1933,7 @@ static bool manage_workers(struct worker *worker)
  * CONTEXT:
  * spin_lock_irq(pool->lock) which is released and regrabbed.
  */
+static char work_comm[16];
 static void process_one_work(struct worker *worker, struct work_struct *work)
 __releases(&pool->lock)
 __acquires(&pool->lock)
@@ -2004,7 +1978,9 @@ __acquires(&pool->lock)
 	worker->current_func = work->func;
 	worker->current_pwq = pwq;
 	work_color = get_work_color(work);
-
+	memset(work_comm, 0, sizeof(work_comm));
+	snprintf(work_comm, 15, "wk:%pf", work->func);
+	strncpy(current->comm, work_comm, 15);
 	list_del_init(&work->entry);
 
 	/*
@@ -4545,17 +4521,6 @@ static void rebind_workers(struct worker_pool *pool, bool force)
 						  pool->attrs->cpumask) < 0);
 
 	spin_lock_irq(&pool->lock);
-
-	/*
-	 * XXX: CPU hotplug notifiers are weird and can call DOWN_FAILED
-	 * w/o preceding DOWN_PREPARE.  Work around it.  CPU hotplug is
-	 * being reworked and this can go away in time.
-	 */
-	if (!(pool->flags & POOL_DISASSOCIATED)) {
-		spin_unlock_irq(&pool->lock);
-		return;
-	}
-
 	pool->flags &= ~POOL_DISASSOCIATED;
 
 	for_each_pool_worker(worker, pool) {
