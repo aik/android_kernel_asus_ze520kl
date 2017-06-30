@@ -161,7 +161,6 @@ uint16_t diag_debug_mask;
 void *diag_ipc_log;
 #endif
 
-extern uint16_t md_support;
 static void diag_md_session_close(struct diag_md_session_t *session_info);
 
 /*
@@ -561,9 +560,8 @@ int diag_cmd_chk_polling(struct diag_cmd_reg_entry_t *entry)
 {
 	int polling = DIAG_CMD_NOT_POLLING;
 
-	if (!entry) {
+	if (!entry)
 		return -EIO;
-	}
 
 	if (entry->cmd_code == DIAG_CMD_NO_SUBSYS) {
 		if (entry->subsys_id == DIAG_CMD_NO_SUBSYS &&
@@ -597,12 +595,10 @@ static void diag_cmd_invalidate_polling(int change_flag)
 	struct list_head *start;
 	struct list_head *temp;
 	struct diag_cmd_reg_t *item = NULL;
+
 	if (change_flag == DIAG_CMD_ADD) {
-		if (driver->polling_reg_flag) {
-			DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
-				" exiting function %s", __func__);
+		if (driver->polling_reg_flag)
 			return;
-		}
 	}
 
 	driver->polling_reg_flag = 0;
@@ -1855,15 +1851,6 @@ static int diag_ioctl_hdlc_toggle(unsigned long ioarg)
 	return 0;
 }
 
-static int diag_ioctl_md_support_list(unsigned long ioarg)
-{
-	if (copy_to_user((void __user *)ioarg, &md_support,
-			sizeof(md_support)))
-		return -EFAULT;
-	else
-		return 0;
-}
-
 static int diag_ioctl_register_callback(unsigned long ioarg)
 {
 	int err = 0;
@@ -2103,9 +2090,6 @@ long diagchar_compat_ioctl(struct file *filp,
 	case DIAG_IOCTL_HDLC_TOGGLE:
 		result = diag_ioctl_hdlc_toggle(ioarg);
 		break;
-	case DIAG_IOCTL_MD_SUPPORT_LIST:
-		result = diag_ioctl_md_support_list(ioarg);
-		break;
 	}
 	return result;
 }
@@ -2228,9 +2212,6 @@ long diagchar_ioctl(struct file *filp,
 		break;
 	case DIAG_IOCTL_HDLC_TOGGLE:
 		result = diag_ioctl_hdlc_toggle(ioarg);
-		break;
-	case DIAG_IOCTL_MD_SUPPORT_LIST:
-		result = diag_ioctl_md_support_list(ioarg);
 		break;
 	}
 	return result;
