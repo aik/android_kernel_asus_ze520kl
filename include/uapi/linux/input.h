@@ -203,8 +203,6 @@ struct input_keymap_entry {
 #define SYN_CONFIG		1
 #define SYN_MT_REPORT		2
 #define SYN_DROPPED		3
-#define SYN_TIME_SEC		4
-#define SYN_TIME_NSEC		5
 #define SYN_MAX			0xf
 #define SYN_CNT			(SYN_MAX+1)
 
@@ -483,6 +481,17 @@ struct input_keymap_entry {
 
 #define KEY_MICMUTE		248	/* Mute / unmute the microphone */
 
+
+// BEGIN: jacob_kung@asus.com: keycode for fingerprint gestures
+#define FRINGERPRINT_SWIPE_UP 827 // 827
+#define FRINGERPRINT_SWIPE_DOWN 828 // 828
+#define FRINGERPRINT_SWIPE_LEFT 829 // 829
+#define FRINGERPRINT_SWIPE_RIGHT 830 // 830
+#define FRINGERPRINT_TAP 831 // 831
+#define FRINGERPRINT_DTAP 832 // 832
+#define FRINGERPRINT_LONGPRESS 833 // 833
+// END: jacob_kung@asus.com
+
 /* Code 255 is reserved for special needs of AT keyboard driver */
 
 #define BTN_MISC		0x100
@@ -754,12 +763,6 @@ struct input_keymap_entry {
 #define KEY_KBDINPUTASSIST_ACCEPT		0x264
 #define KEY_KBDINPUTASSIST_CANCEL		0x265
 
-/* Cap sensor report key, including cs0, cs1, cs2 and comb */
-#define KEY_CAP_CS0		0x270
-#define KEY_CAP_CS1		0x271
-#define KEY_CAP_CS2		0x272
-#define KEY_CAP_COMB		0x272
-
 #define BTN_TRIGGER_HAPPY		0x2c0
 #define BTN_TRIGGER_HAPPY1		0x2c0
 #define BTN_TRIGGER_HAPPY2		0x2c1
@@ -804,7 +807,7 @@ struct input_keymap_entry {
 
 /* We avoid low common keys in module aliases so they don't get huge. */
 #define KEY_MIN_INTERESTING	KEY_MUTE
-#define KEY_MAX			0x2ff
+#define KEY_MAX			0x3ff
 #define KEY_CNT			(KEY_MAX+1)
 
 /*
@@ -970,7 +973,6 @@ struct input_keymap_entry {
 #define BUS_HIL			0x04
 #define BUS_BLUETOOTH		0x05
 #define BUS_VIRTUAL		0x06
-#define BUS_GREYBUS		0x07
 
 #define BUS_ISA			0x10
 #define BUS_I8042		0x11
