@@ -391,11 +391,7 @@ do {									\
 #define __get_user_asm_ex(x, addr, itype, rtype, ltype)			\
 	asm volatile("1:	mov"itype" %1,%"rtype"0\n"		\
 		     "2:\n"						\
-		     ".section .fixup,\"ax\"\n"				\
-                     "3:xor"itype" %"rtype"0,%"rtype"0\n"		\
-		     "  jmp 2b\n"					\
-		     ".previous\n"					\
-		     _ASM_EXTABLE_EX(1b, 3b)				\
+		     _ASM_EXTABLE_EX(1b, 2b)				\
 		     : ltype(x) : "m" (__m(addr)))
 
 #define __put_user_nocheck(x, ptr, size)			\
@@ -743,31 +739,6 @@ copy_to_user(void __user *to, const void *from, unsigned long n)
 
 #undef __copy_from_user_overflow
 #undef __copy_to_user_overflow
-
-/*
- * The "unsafe" user accesses aren't really "unsafe", but the naming
- * is a big fat warning: you have to not only do the access_ok()
- * checking before using them, but you have to surround them with the
- * user_access_begin/end() pair.
- */
-#define user_access_begin()	__uaccess_begin()
-#define user_access_end()	__uaccess_end()
-
-#define unsafe_put_user(x, ptr, err_label)					\
-do {										\
-	int __pu_err;								\
-	__put_user_size((x), (ptr), sizeof(*(ptr)), __pu_err, -EFAULT);		\
-	if (unlikely(__pu_err)) goto err_label;					\
-} while (0)
-
-#define unsafe_get_user(x, ptr, err_label)					\
-do {										\
-	int __gu_err;								\
-	unsigned long __gu_val;							\
-	__get_user_size(__gu_val, (ptr), sizeof(*(ptr)), __gu_err, -EFAULT);	\
-	(x) = (__force __typeof__(*(ptr)))__gu_val;				\
-	if (unlikely(__gu_err)) goto err_label;					\
-} while (0)
 
 #endif /* _ASM_X86_UACCESS_H */
 
