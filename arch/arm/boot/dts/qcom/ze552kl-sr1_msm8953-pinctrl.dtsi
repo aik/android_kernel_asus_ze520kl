@@ -145,12 +145,12 @@
 		cam_sensor_rear_default: cam_sensor_rear_default {
 			/* RESET, STANDBY */
 			mux {
-				pins = "gpio40", "gpio39";
+				pins = "gpio39";
 				function = "gpio";
 			};
 
 			config {
-				pins = "gpio40","gpio39";
+				pins = "gpio39";
 				bias-disable; /* No PULL */
 				drive-strength = <2>; /* 2 MA */
 			};
@@ -159,12 +159,12 @@
 		cam_sensor_rear_sleep: cam_sensor_rear_sleep {
 			/* RESET, STANDBY */
 			mux {
-				pins = "gpio40","gpio39";
+				pins = "gpio39";
 				function = "gpio";
 			};
 
 			config {
-				pins = "gpio40","gpio39";
+				pins = "gpio39";
 				bias-disable; /* No PULL */
 				drive-strength = <2>; /* 2 MA */
 			};
@@ -314,6 +314,98 @@
 			};
 		};
 
+		/* ASUS_BSP +++ ShawnHuang AP3045 */
+		ap3045_int_pin {
+			ap3045_default: ap3045_default {
+				mux {
+					pins = "gpio43";
+					function = "gpio";
+				};
+
+				config {
+					pins = "gpio43";
+					bias-pull-up;
+					drive-strength = <6>;
+				};
+			};
+
+			ap3045_sleep: ap3045_sleep {
+				mux {
+					pins = "gpio43";
+					function = "gpio";
+				};
+
+				config {
+					pins = "gpio43";
+					bias-pull-up;
+					drive-strength = <6>;
+				};
+			};
+		};
+
+		hall_int_pin {
+			gpio_hall_active: gpio_hall_active {
+				mux {
+					pins = "gpio12";
+					function = "gpio";
+				};
+
+				config {
+					pins = "gpio12";
+					drive-strength = <2>;
+					bias-pull-up;
+				};
+			};
+			
+			gpio_hall_suspend: gpio_hall_suspend {
+				mux {
+					pins = "gpio12";
+					function = "gpio";
+				};
+
+				config {
+					pins = "gpio12";
+					drive-strength = <2>;
+					bias-pull-up;
+				};
+			};
+		};
+		/*
+		ap3045_int_pin {
+			qcom,pins = <&gp 141>;
+			qcom,pin-func = <0>;
+			qcom,num-grp-pins = <1>;
+			label = "qcom,alsps-gpio";
+			ap3045_default:ap3045_default {
+				drive-strength = <6>;
+				bias-pull-up;
+			};
+			ap3045_sleep: ap3045_sleep {
+				drive-strength = <6>;
+				bias-pull-up;
+			};
+		};*/
+		/* ASUS_BSP --- ShawnHuang AP3045 */
+
+		/* ASUS_BSP +++ ShawnHuang YB8254 */
+		/*
+		hall_int_pin {
+			qcom,pins = <&gp 107>;
+			qcom,pin-func = <0>;
+			qcom,num-grp-pins = <1>;
+			label = "hall_int_pin";
+			gpio_hall_active: gpio_hall_active {
+				drive-strength = <2>;
+				bias-pull-up;
+			};
+			gpio_hall_suspend: gpio_hall_suspend {
+				drive-strength = <2>;
+				bias-pull-up;
+			};
+		};*/
+		/* ASUS_BSP --- ShawnHuang YB8254 */
+
+
 		pmx_adv7533_int: pmx_adv7533_int {
 			adv7533_int_active: adv7533_int_active {
 				mux {
@@ -400,12 +492,12 @@
 
 		hsuart_active: default {
 			mux {
-				pins = "gpio12", "gpio13", "gpio14", "gpio15";
+				pins = "gpio12", "gpio14", "gpio15";
 				function = "blsp_uart4";
 			};
 
 			config {
-				pins = "gpio12", "gpio13", "gpio14", "gpio15";
+				pins = "gpio12", "gpio14", "gpio15";
 				drive-strength = <16>;
 				bias-disable;
 			};
@@ -413,12 +505,12 @@
 
 		hsuart_sleep: sleep {
 			mux {
-				pins = "gpio12", "gpio13", "gpio14", "gpio15";
+				pins = "gpio12", "gpio14", "gpio15";
 				function = "gpio";
 			};
 
 			config {
-				pins = "gpio12", "gpio13", "gpio14", "gpio15";
+				pins = "gpio12", "gpio14", "gpio15";
 				drive-strength = <2>;
 				bias-disable;
 			};
@@ -545,7 +637,7 @@
 			config {
 				pins = "gpio133";
 				drive-strength = <2>;
-				bias-pull-up;
+				bias-disable;
 			};
 		};
 
@@ -561,6 +653,8 @@
 				bias-disable;
 			};
 		};
+
+//+++.....................................................I2C bus part....................................................+++//
 
 		i2c_2 {
 			i2c_2_active: i2c_2_active {
@@ -651,6 +745,37 @@
 				};
 			};
 		};
+
+		i2c_6 {
+			i2c_6_active: i2c_6_active {
+				/* active state */
+				mux {
+					pins = "gpio22", "gpio23";
+					function = "blsp_i2c6";
+				};
+
+				config {
+					pins = "gpio22", "gpio23";
+					drive-strength = <2>;
+					bias-disable;
+				};
+			};
+
+			i2c_6_sleep: i2c_6_sleep {
+				/* suspended state */
+				mux {
+					pins = "gpio22", "gpio23";
+					function = "gpio";
+				};
+
+				config {
+					pins = "gpio22", "gpio23";
+					drive-strength = <2>;
+					bias-disable;
+				};
+			};
+		};
+//---.....................................................I2C bus part....................................................---//
 
 		pmx_rd_nfc_int {
 			/*qcom,pins = <&gp 17>;*/
@@ -1034,24 +1159,24 @@
 		pri-tlmm-lines {
 			pri_tlmm_lines_act: pri_tlmm_lines_act {
 				mux {
-					pins = "gpio91", "gpio93";
+					pins = "gpio88", "gpio91", "gpio93";
 					function = "pri_mi2s";
 				};
 
 				config {
-					pins = "gpio91", "gpio93";
+					pins = "gpio88", "gpio91", "gpio93";
 					drive-strength = <8>;
 				};
 			};
 
 			pri_tlmm_lines_sus: pri_tlmm_lines_sus {
 				mux {
-					pins = "gpio91", "gpio93";
+					pins = "gpio88", "gpio91", "gpio93";
 					function = "pri_mi2s";
 				};
 
 				config {
-					pins = "gpio91", "gpio93";
+					pins = "gpio88", "gpio91", "gpio93";
 					drive-strength = <2>;
 					bias-pull-down;
 				};
@@ -1224,12 +1349,12 @@
 		tlmm_gpio_key {
 			gpio_key_active: gpio_key_active {
 				mux {
-					pins = "gpio85", "gpio86", "gpio87";
+					pins = "gpio13" , "gpio85";
 					function = "gpio";
 				};
 
 				config {
-					pins = "gpio85", "gpio86", "gpio87";
+					pins = "gpio13" , "gpio85";
 					drive-strength = <2>;
 					bias-pull-up;
 				};
@@ -1237,17 +1362,49 @@
 
 			gpio_key_suspend: gpio_key_suspend {
 				mux {
-					pins = "gpio85", "gpio86", "gpio87";
+					pins = "gpio13" , "gpio85";
 					function = "gpio";
 				};
 
 				config {
-					pins = "gpio85", "gpio86", "gpio87";
+					pins = "gpio13" , "gpio85";
 					drive-strength = <2>;
 					bias-pull-up;
 				};
 			};
 		};
+
+		/* add pingrp for fingerprint */
+		tlmm_fp_int {
+			fp_int_active: fp_int_active {
+				mux {
+					pins = "gpio48";
+					function = "gpio";
+				};
+
+				config {
+					pins = "gpio48";
+					drive-strength = <2>;
+					bias-disable = <0>; /* no pull */
+				};
+			};
+
+			fp_int_suspend: fp_int_suspend {
+				mux {
+					pins = "gpio48";
+					function = "gpio";
+				};
+
+				config {
+					pins = "gpio48";
+					drive-strength = <2>;
+					bias-disable = <0>; /* no pull */
+				};
+			};
+		};
+		/* add pingrp for fingerprint */
+
+
 		pmx_qdsd_clk {
 			qdsd_clk_sdcard: clk_sdcard {
 				config {
